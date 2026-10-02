@@ -1,55 +1,116 @@
 <!doctype html>
 <html lang="ru">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Камера MacBook</title>
-<style>
-  html, body { margin: 0; height: 100%; background: #000; color: #eee; font: 16px -apple-system, system-ui, sans-serif; }
-  video { width: 100%; height: 100%; object-fit: contain; background: #000; }
-  #bar { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); display: flex; gap: 12px; align-items: center; background: rgba(0,0,0,.6); }
-  button { font: inherit; padding: 8px 16px; border-radius: 8px; border: 0; background: #2f7df6; color: #fff; }
-</style>
-</head>
-<body>
-<video id="v" autoplay muted playsinline></video>
-<div id="bar"><span id="status">Подключение…</span><button id="sound" hidden>Включить звук</button></div>
-<script src="common.js"></script>
-<script>
-const $ = (id) => document.getElementById(id);
-const v = $('v');
-let pc, ws;
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Камера MacBook</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        color: #eee;
+        font:
+          16px -apple-system,
+          system-ui,
+          sans-serif;
+      }
+      video {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        background: #000;
+      }
+      #bar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        background: rgba(0, 0, 0, 0.6);
+      }
+      button {
+        font: inherit;
+        padding: 8px 16px;
+        border-radius: 8px;
+        border: 0;
+        background: #2f7df6;
+        color: #fff;
+      }
+    </style>
+  </head>
+  <body>
+    <video id="v" autoplay muted playsinline></video>
+    <div id="bar">
+      <span id="status">Подключение…</span
+      ><button id="sound" hidden>Включить звук</button>
+    </div>
+    <script src="common.js"></script>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const v = $("v");
+      let pc, ws;
 
-function connect() {
-  ws = new WebSocket(wsUrl());
-  ws.onopen = () => ws.send(JSON.stringify({ type: 'viewer' }));
-  ws.onclose = () => { $('status').textContent = 'Нет связи, переподключение…'; setTimeout(connect, 1500); };
-  ws.onmessage = async ({ data }) => {
-    const m = JSON.parse(data);
-    if (m.type === 'waiting') { pc?.close(); pc = null; v.srcObject = null; $('status').textContent = 'Ждём вещание с MacBook…'; }
-    else if (m.type === 'live') $('status').textContent = 'Подключаемся к камере…';
-    else if (m.type === 'offer') await onOffer(m.sdp);
-    else if (m.type === 'candidate') await pc?.addIceCandidate(m.candidate).catch(() => {});
-  };
-}
+      function connect() {
+        ws = new WebSocket(wsUrl());
+        ws.onopen = () => ws.send(JSON.stringify({ type: "viewer" }));
+        ws.onclose = () => {
+          $("status").textContent = "Нет связи, переподключение…";
+          setTimeout(connect, 1500);
+        };
+        ws.onmessage = async ({ data }) => {
+          const m = JSON.parse(data);
+          if (m.type === "waiting") {
+            pc?.close();
+            pc = null;
+            v.srcObject = null;
+            $("status").textContent = "Ждём вещание с MacBook…";
+          } else if (m.type === "live")
+            $("status").textContent = "Подключаемся к камере…";
+          else if (m.type === "offer") await onOffer(m.sdp);
+          else if (m.type === "candidate")
+            await pc?.addIceCandidate(m.candidate).catch(() => {});
+        };
+      }
 
-async function onOffer(sdp) {
-  pc?.close();
-  pc = new RTCPeerConnection(RTC_CONFIG);
-  pc.onicecandidate = (e) => e.candidate && ws.send(JSON.stringify({ type: 'viewer-candidate', candidate: e.candidate }));
-  pc.ontrack = (e) => {
-    v.srcObject = e.streams[0];
-    v.play().catch(() => {});
-    $('sound').hidden = !e.streams[0].getAudioTracks().length;
-  };
-  pc.onconnectionstatechange = () => { if (pc.connectionState === 'connected') $('status').textContent = '● В эфире'; };
-  await pc.setRemoteDescription(sdp);
-  await pc.setLocalDescription(await pc.createAnswer());
-  ws.send(JSON.stringify({ type: 'answer', sdp: pc.localDescription }));
-}
+      async function onOffer(sdp) {
+        pc?.close();
+        pc = new RTCPeerConnection(RTC_CONFIG);
+        pc.onicecandidate = (e) =>
+          e.candidate &&
+          ws.send(
+            JSON.stringify({
+              type: "viewer-candidate",
+              candidate: e.candidate,
+            }),
+          );
+        pc.ontrack = (e) => {
+          v.srcObject = e.streams[0];
+          v.play().catch(() => {});
+          $("sound").hidden = !e.streams[0].getAudioTracks().length;
+        };
+        pc.onconnectionstatechange = () => {
+          if (pc.connectionState === "connected")
+            $("status").textContent = "● В эфире";
+        };
+        await pc.setRemoteDescription(sdp);
+        await pc.setLocalDescription(await pc.createAnswer());
+        ws.send(JSON.stringify({ type: "answer", sdp: pc.localDescription }));
+      }
 
-$('sound').onclick = () => { v.muted = false; v.play(); $('sound').hidden = true; };
-connect();
-</script>
-</body>
+      $("sound").onclick = () => {
+        v.muted = false;
+        v.play();
+        $("sound").hidden = true;
+      };
+      connect();
+    </script>
+  </body>
 </html>

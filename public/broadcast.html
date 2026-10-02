@@ -1,72 +1,147 @@
 <!doctype html>
 <html lang="ru">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Камера MacBook — вещание</title>
-<style>
-  body { font: 16px system-ui, sans-serif; margin: 0; padding: 24px; background: #111; color: #eee; }
-  video { width: 100%; max-width: 720px; background: #000; border-radius: 12px; display: block; margin: 16px 0; }
-  button { font: inherit; padding: 10px 18px; border-radius: 8px; border: 0; background: #2f7df6; color: #fff; cursor: pointer; }
-  button:disabled { background: #444; cursor: default; }
-  label { margin-left: 12px; } code { background: #222; padding: 2px 6px; border-radius: 4px; }
-</style>
-</head>
-<body>
-<h1>Камера MacBook → iPhone</h1>
-<button id="start">Включить камеру</button>
-<label><input type="checkbox" id="audio"> со звуком</label>
-<video id="preview" autoplay muted playsinline></video>
-<p id="status">Нажмите «Включить камеру» и разрешите доступ.</p>
-<p>На iPhone откройте: <code id="url"></code></p>
-<script src="common.js"></script>
-<script>
-const $ = (id) => document.getElementById(id);
-const peers = new Map();
-let stream, ws;
-$('url').textContent = `${location.origin}/watch`;
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Камера MacBook — вещание</title>
+    <style>
+      body {
+        font:
+          16px system-ui,
+          sans-serif;
+        margin: 0;
+        padding: 24px;
+        background: #111;
+        color: #eee;
+      }
+      video {
+        width: 100%;
+        max-width: 720px;
+        background: #000;
+        border-radius: 12px;
+        display: block;
+        margin: 16px 0;
+      }
+      button {
+        font: inherit;
+        padding: 10px 18px;
+        border-radius: 8px;
+        border: 0;
+        background: #2f7df6;
+        color: #fff;
+        cursor: pointer;
+      }
+      button:disabled {
+        background: #444;
+        cursor: default;
+      }
+      label {
+        margin-left: 12px;
+      }
+      code {
+        background: #222;
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Камера MacBook → iPhone</h1>
+    <button id="start">Включить камеру</button>
+    <label><input type="checkbox" id="audio" /> со звуком</label>
+    <video id="preview" autoplay muted playsinline></video>
+    <p id="status">Нажмите «Включить камеру» и разрешите доступ.</p>
+    <p>На iPhone откройте: <code id="url"></code></p>
+    <script src="common.js"></script>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const peers = new Map();
+      let stream, ws;
+      $("url").textContent = `${location.origin}/watch`;
 
-async function start() {
-  $('start').disabled = true;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
-      audio: $('audio').checked,
-    });
-  } catch (e) { $('status').textContent = 'Нет доступа к камере: ' + e.message; $('start').disabled = false; return; }
-  $('preview').srcObject = stream;
-  connect();
-}
+      async function start() {
+        $("start").disabled = true;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              frameRate: { ideal: 30 },
+            },
+            audio: $("audio").checked,
+          });
+        } catch (e) {
+          $("status").textContent = "Нет доступа к камере: " + e.message;
+          $("start").disabled = false;
+          return;
+        }
+        $("preview").srcObject = stream;
+        connect();
+      }
 
-function connect() {
-  ws = new WebSocket(wsUrl());
-  ws.onopen = () => { ws.send(JSON.stringify({ type: 'broadcaster' })); $('status').textContent = 'Вещание идёт. Зрителей: 0'; };
-  ws.onclose = () => { $('status').textContent = 'Соединение потеряно, переподключение…'; setTimeout(connect, 1500); };
-  ws.onmessage = async ({ data }) => {
-    const m = JSON.parse(data);
-    if (m.type === 'viewer-joined') await addViewer(m.id);
-    else if (m.type === 'viewer-left') dropViewer(m.id);
-    else if (m.type === 'answer') await peers.get(m.from)?.setRemoteDescription(m.sdp);
-    else if (m.type === 'candidate') await peers.get(m.from)?.addIceCandidate(m.candidate).catch(() => {});
-    else if (m.type === 'replaced') { $('status').textContent = 'Вещание открыто в другой вкладке.'; ws.onclose = null; ws.close(); }
-  };
-}
+      function connect() {
+        ws = new WebSocket(wsUrl());
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ type: "broadcaster" }));
+          $("status").textContent = "Вещание идёт. Зрителей: 0";
+        };
+        ws.onclose = () => {
+          $("status").textContent = "Соединение потеряно, переподключение…";
+          setTimeout(connect, 1500);
+        };
+        ws.onmessage = async ({ data }) => {
+          const m = JSON.parse(data);
+          if (m.type === "viewer-joined") await addViewer(m.id);
+          else if (m.type === "viewer-left") dropViewer(m.id);
+          else if (m.type === "answer")
+            await peers.get(m.from)?.setRemoteDescription(m.sdp);
+          else if (m.type === "candidate")
+            await peers
+              .get(m.from)
+              ?.addIceCandidate(m.candidate)
+              .catch(() => {});
+          else if (m.type === "replaced") {
+            $("status").textContent = "Вещание открыто в другой вкладке.";
+            ws.onclose = null;
+            ws.close();
+          }
+        };
+      }
 
-async function addViewer(id) {
-  dropViewer(id);
-  const pc = new RTCPeerConnection(RTC_CONFIG);
-  peers.set(id, pc);
-  stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-  pc.onicecandidate = (e) => e.candidate && ws.send(JSON.stringify({ type: 'candidate', to: id, candidate: e.candidate }));
-  pc.onconnectionstatechange = () => { if (['failed', 'closed'].includes(pc.connectionState)) dropViewer(id); };
-  await pc.setLocalDescription(await pc.createOffer());
-  ws.send(JSON.stringify({ type: 'offer', to: id, sdp: pc.localDescription }));
-  count();
-}
-function dropViewer(id) { peers.get(id)?.close(); peers.delete(id); count(); }
-function count() { if (stream) $('status').textContent = `Вещание идёт. Зрителей: ${peers.size}`; }
+      async function addViewer(id) {
+        dropViewer(id);
+        const pc = new RTCPeerConnection(RTC_CONFIG);
+        peers.set(id, pc);
+        stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+        pc.onicecandidate = (e) =>
+          e.candidate &&
+          ws.send(
+            JSON.stringify({
+              type: "candidate",
+              to: id,
+              candidate: e.candidate,
+            }),
+          );
+        pc.onconnectionstatechange = () => {
+          if (["failed", "closed"].includes(pc.connectionState)) dropViewer(id);
+        };
+        await pc.setLocalDescription(await pc.createOffer());
+        ws.send(
+          JSON.stringify({ type: "offer", to: id, sdp: pc.localDescription }),
+        );
+        count();
+      }
+      function dropViewer(id) {
+        peers.get(id)?.close();
+        peers.delete(id);
+        count();
+      }
+      function count() {
+        if (stream)
+          $("status").textContent = `Вещание идёт. Зрителей: ${peers.size}`;
+      }
 
-$('start').onclick = start;
-</script>
-</body>
+      $("start").onclick = start;
+    </script>
+  </body>
 </html>
