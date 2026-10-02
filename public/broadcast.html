@@ -1,115 +1,251 @@
 <!doctype html>
 <html lang="ru">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Камера MacBook — вещание</title>
-<style>
-  body { font: 16px system-ui, sans-serif; margin: 0; padding: 24px; background: #111; color: #eee; }
-  video { width: 100%; max-width: 720px; background: #000; border-radius: 12px; display: block; margin: 16px 0; }
-  button { font: inherit; padding: 10px 18px; border-radius: 8px; border: 0; background: #2f7df6; color: #fff; cursor: pointer; }
-  button:disabled { background: #444; cursor: default; }
-  label { margin-left: 12px; } code { background: #222; padding: 2px 6px; border-radius: 4px; }
-</style>
-</head>
-<body>
-<h1>Камера MacBook → телефон</h1>
-<button id="start">Включить камеру</button>
-<label><input type="checkbox" id="audio"> со звуком</label>
-<video id="preview" autoplay muted playsinline></video>
-<p id="status">Нажмите «Включить камеру» и разрешите доступ.</p>
-<p>На телефоне откройте: <code id="url"></code></p>
-<script src="common.js"></script>
-<script>
-var $ = function (id) { return document.getElementById(id); };
-var peers = {}, stream, ws, framesOn = false, frameTimer = null;
-$('url').textContent = location.origin + '/watch';
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Камера MacBook — вещание</title>
+    <style>
+      body {
+        font:
+          16px system-ui,
+          sans-serif;
+        margin: 0;
+        padding: 24px;
+        background: #111;
+        color: #eee;
+      }
+      video {
+        width: 100%;
+        max-width: 720px;
+        background: #000;
+        border-radius: 12px;
+        display: block;
+        margin: 16px 0;
+      }
+      button {
+        font: inherit;
+        padding: 10px 18px;
+        border-radius: 8px;
+        border: 0;
+        background: #2f7df6;
+        color: #fff;
+        cursor: pointer;
+      }
+      button:disabled {
+        background: #444;
+        cursor: default;
+      }
+      label {
+        margin-left: 12px;
+      }
+      code {
+        background: #222;
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Камера MacBook → телефон</h1>
+    <button id="start">Включить камеру</button>
+    <label><input type="checkbox" id="audio" /> со звуком</label>
+    <video id="preview" autoplay muted playsinline></video>
+    <p id="status">Нажмите «Включить камеру» и разрешите доступ.</p>
+    <p>На телефоне откройте: <code id="url"></code></p>
+    <script src="common.js"></script>
+    <script>
+      var $ = function (id) {
+        return document.getElementById(id);
+      };
+      var peers = {},
+        stream,
+        ws,
+        framesOn = false,
+        frameTimer = null;
+      $("url").textContent = location.origin + "/watch";
 
-function setStatus(t) { $('status').textContent = t; }
+      function setStatus(t) {
+        $("status").textContent = t;
+      }
 
-function start() {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    setStatus('Браузер не даёт доступ к камере. Откройте https://localhost:' + location.port + '/ на этом компьютере.');
-    return;
-  }
-  $('start').disabled = true;
-  navigator.mediaDevices.getUserMedia({
-    video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
-    audio: $('audio').checked
-  }).then(function (s) {
-    stream = s;
-    $('preview').srcObject = s;
-    connect();
-  }).catch(function (e) {
-    setStatus('Нет доступа к камере: ' + e.message + '. Разрешите камеру в настройках браузера и macOS.');
-    $('start').disabled = false;
-  });
-}
+      function start() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          setStatus(
+            "Браузер не даёт доступ к камере. Откройте https://localhost:" +
+              location.port +
+              "/ на этом компьютере.",
+          );
+          return;
+        }
+        $("start").disabled = true;
+        navigator.mediaDevices
+          .getUserMedia({
+            video: {
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              frameRate: { ideal: 30 },
+            },
+            audio: $("audio").checked,
+          })
+          .then(function (s) {
+            stream = s;
+            $("preview").srcObject = s;
+            connect();
+          })
+          .catch(function (e) {
+            setStatus(
+              "Нет доступа к камере: " +
+                e.message +
+                ". Разрешите камеру в настройках браузера и macOS.",
+            );
+            $("start").disabled = false;
+          });
+      }
 
-function connect() {
-  ws = new WebSocket(wsUrl());
-  ws.binaryType = 'arraybuffer';
-  ws.onopen = function () { ws.send(JSON.stringify({ type: 'broadcaster' })); count(); };
-  ws.onclose = function () { setStatus('Соединение потеряно, переподключение…'); stopFrames(); setTimeout(connect, 1500); };
-  ws.onmessage = function (ev) {
-    var m = JSON.parse(ev.data);
-    if (m.type === 'viewer-joined') addViewer(m.id);
-    else if (m.type === 'viewer-left') dropViewer(m.id);
-    else if (m.type === 'answer') onAnswer(m.from, m.sdp);
-    else if (m.type === 'candidate') onCandidate(m.from, m.candidate);
-    else if (m.type === 'frames') { m.on ? startFrames() : stopFrames(); }
-    else if (m.type === 'replaced') { setStatus('Вещание открыто в другой вкладке.'); ws.onclose = null; ws.close(); }
-  };
-}
+      function connect() {
+        ws = new WebSocket(wsUrl());
+        ws.binaryType = "arraybuffer";
+        ws.onopen = function () {
+          ws.send(JSON.stringify({ type: "broadcaster" }));
+          count();
+        };
+        ws.onclose = function () {
+          setStatus("Соединение потеряно, переподключение…");
+          stopFrames();
+          setTimeout(connect, 1500);
+        };
+        ws.onmessage = function (ev) {
+          var m = JSON.parse(ev.data);
+          if (m.type === "viewer-joined") addViewer(m.id);
+          else if (m.type === "viewer-left") dropViewer(m.id);
+          else if (m.type === "answer") onAnswer(m.from, m.sdp);
+          else if (m.type === "candidate") onCandidate(m.from, m.candidate);
+          else if (m.type === "frames") {
+            m.on ? startFrames() : stopFrames();
+          } else if (m.type === "replaced") {
+            setStatus("Вещание открыто в другой вкладке.");
+            ws.onclose = null;
+            ws.close();
+          }
+        };
+      }
 
-function addViewer(id) {
-  dropViewer(id);
-  var pc = new RTCPeerConnection(RTC_CONFIG);
-  var p = { pc: pc, queue: [], remote: false };
-  peers[id] = p;
-  stream.getTracks().forEach(function (t) { pc.addTrack(t, stream); });
-  pc.onicecandidate = function (e) { if (e.candidate) ws.send(JSON.stringify({ type: 'candidate', to: id, candidate: e.candidate })); };
-  pc.onconnectionstatechange = function () { if (pc.connectionState === 'failed' || pc.connectionState === 'closed') dropViewer(id); };
-  pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).then(function () {
-    ws.send(JSON.stringify({ type: 'offer', to: id, sdp: pc.localDescription }));
-  }).catch(function () {});
-  count();
-}
-function onAnswer(id, sdp) {
-  var p = peers[id]; if (!p) return;
-  p.pc.setRemoteDescription(sdp).then(function () {
-    p.remote = true;
-    p.queue.forEach(function (c) { p.pc.addIceCandidate(c).catch(function () {}); });
-    p.queue = [];
-  }).catch(function () {});
-}
-function onCandidate(id, c) {
-  var p = peers[id]; if (!p || !c) return;
-  if (p.remote) p.pc.addIceCandidate(c).catch(function () {}); else p.queue.push(c);
-}
-function dropViewer(id) { if (peers[id]) { peers[id].pc.close(); delete peers[id]; } count(); }
-function count() { if (stream) setStatus('Вещание идёт. Зрителей: ' + Object.keys(peers).length + (framesOn ? ' (есть зритель в запасном режиме без звука)' : '')); }
+      function addViewer(id) {
+        dropViewer(id);
+        var pc = new RTCPeerConnection(RTC_CONFIG);
+        var p = { pc: pc, queue: [], remote: false };
+        peers[id] = p;
+        stream.getTracks().forEach(function (t) {
+          pc.addTrack(t, stream);
+        });
+        pc.onicecandidate = function (e) {
+          if (e.candidate)
+            ws.send(
+              JSON.stringify({
+                type: "candidate",
+                to: id,
+                candidate: e.candidate,
+              }),
+            );
+        };
+        pc.onconnectionstatechange = function () {
+          if (
+            pc.connectionState === "failed" ||
+            pc.connectionState === "closed"
+          )
+            dropViewer(id);
+        };
+        pc.createOffer()
+          .then(function (o) {
+            return pc.setLocalDescription(o);
+          })
+          .then(function () {
+            ws.send(
+              JSON.stringify({
+                type: "offer",
+                to: id,
+                sdp: pc.localDescription,
+              }),
+            );
+          })
+          .catch(function () {});
+        count();
+      }
+      function onAnswer(id, sdp) {
+        var p = peers[id];
+        if (!p) return;
+        p.pc
+          .setRemoteDescription(sdp)
+          .then(function () {
+            p.remote = true;
+            p.queue.forEach(function (c) {
+              p.pc.addIceCandidate(c).catch(function () {});
+            });
+            p.queue = [];
+          })
+          .catch(function () {});
+      }
+      function onCandidate(id, c) {
+        var p = peers[id];
+        if (!p || !c) return;
+        if (p.remote) p.pc.addIceCandidate(c).catch(function () {});
+        else p.queue.push(c);
+      }
+      function dropViewer(id) {
+        if (peers[id]) {
+          peers[id].pc.close();
+          delete peers[id];
+        }
+        count();
+      }
+      function count() {
+        if (stream)
+          setStatus(
+            "Вещание идёт. Зрителей: " +
+              Object.keys(peers).length +
+              (framesOn ? " (есть зритель в запасном режиме без звука)" : ""),
+          );
+      }
 
-// Запасной режим: JPEG-кадры через WebSocket для устройств, где WebRTC не соединился.
-function startFrames() {
-  framesOn = true; count();
-  if (frameTimer) return;
-  var video = $('preview'), canvas = document.createElement('canvas'), ctx = canvas.getContext('2d'), busy = false;
-  frameTimer = setInterval(function () {
-    if (busy || !video.videoWidth || ws.readyState !== 1) return;
-    var w = Math.min(960, video.videoWidth);
-    canvas.width = w; canvas.height = Math.round(w * video.videoHeight / video.videoWidth);
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    busy = true;
-    canvas.toBlob(function (b) {
-      busy = false;
-      if (b && ws.readyState === 1 && ws.bufferedAmount < 1e6) ws.send(b);
-    }, 'image/jpeg', 0.6);
-  }, 80);
-}
-function stopFrames() { framesOn = false; if (frameTimer) { clearInterval(frameTimer); frameTimer = null; } if (stream) count(); }
+      // Запасной режим: JPEG-кадры через WebSocket для устройств, где WebRTC не соединился.
+      function startFrames() {
+        framesOn = true;
+        count();
+        if (frameTimer) return;
+        var video = $("preview"),
+          canvas = document.createElement("canvas"),
+          ctx = canvas.getContext("2d"),
+          busy = false;
+        frameTimer = setInterval(function () {
+          if (busy || !video.videoWidth || ws.readyState !== 1) return;
+          var w = Math.min(960, video.videoWidth);
+          canvas.width = w;
+          canvas.height = Math.round(
+            (w * video.videoHeight) / video.videoWidth,
+          );
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          busy = true;
+          canvas.toBlob(
+            function (b) {
+              busy = false;
+              if (b && ws.readyState === 1 && ws.bufferedAmount < 1e6)
+                ws.send(b);
+            },
+            "image/jpeg",
+            0.6,
+          );
+        }, 80);
+      }
+      function stopFrames() {
+        framesOn = false;
+        if (frameTimer) {
+          clearInterval(frameTimer);
+          frameTimer = null;
+        }
+        if (stream) count();
+      }
 
-$('start').onclick = start;
-</script>
-</body>
+      $("start").onclick = start;
+    </script>
+  </body>
 </html>
