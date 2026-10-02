@@ -16,6 +16,7 @@ const TYPES = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml",
+  ".png": "image/png",
   ".webmanifest": "application/manifest+json",
 };
 
@@ -73,6 +74,34 @@ async function loadCert(ips) {
 
 let LAN_IPS = [];
 
+// PIN для зрителей: PIN=1234 npm start, PIN=off — без пароля; иначе случайный, сохраняется в certs/pin.txt.
+function loadPin() {
+  const env = process.env.PIN;
+  if (env && env.toLowerCase() === "off") return null;
+  if (env) return env;
+  const file = path.join(CERT_DIR, "pin.txt");
+  try {
+    const saved = fs.readFileSync(file, "utf8").trim();
+    if (/^\d{4,8}$/.test(saved)) return saved;
+  } catch {}
+  const pin = String(crypto.randomInt(0, 1e6)).padStart(6, "0");
+  fs.mkdirSync(CERT_DIR, { recursive: true });
+  fs.writeFileSync(file, pin);
+  return pin;
+}
+let PIN = null;
+const pinOk = (given) => {
+  if (PIN === null) return true;
+  const a = Buffer.from(String(given || ""));
+  const b = Buffer.from(PIN);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+// Вещать может только сам Mac: loopback или один из его собственных адресов.
+const isLocal = (addr) => {
+  const a = String(addr || "").replace(/^::ffff:/, "");
+  return a === "127.0.0.1" || a === "::1" || LAN_IPS.includes(a);
+};
+
 function serveStatic(req, res) {
   const url = new URL(req.url, "https://x");
   if (url.pathname === "/info") {
@@ -81,9 +110,13 @@ function serveStatic(req, res) {
       "Content-Type": "application/json",
       "Cache-Control": "no-store",
     });
+    const local = isLocal(req.socket.remoteAddress);
+    const q = PIN !== null && local ? `?pin=${PIN}` : "";
     res.end(
       JSON.stringify({
-        watchUrls: LAN_IPS.map((ip) => `https://${ip}:${PORT}/watch`),
+        watchUrls: LAN_IPS.map((ip) => `https://${ip}:${PORT}/watch${q}`),
+        pin: local ? PIN : null, // PIN видит только Mac
+        local,
       }),
     );
     return;
@@ -144,8 +177,10 @@ function attachSignaling(server) {
       on: [...viewers.values()].some((v) => v.frames),
     });
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
     ws.id = crypto.randomUUID();
+    ws.local = isLocal(req.socket.remoteAddress);
+    ws.badPins = 0;
     ws.on("message", (raw, isBinary) => {
       if (isBinary) {
         // JPEG-кадры запасного режима: вещатель -> зрители с включённым fallback
@@ -167,6 +202,10 @@ function attachSignaling(server) {
       }
       switch (m.type) {
         case "broadcaster":
+          if (!ws.local) {
+            send(ws, { type: "forbidden" });
+            return;
+          }
           if (broadcaster && broadcaster !== ws)
             send(broadcaster, { type: "replaced" });
           broadcaster = ws;
@@ -178,6 +217,12 @@ function attachSignaling(server) {
           updateFrames();
           break;
         case "viewer":
+          if (!pinOk(m.pin)) {
+            if (m.pin) ws.badPins++;
+            if (ws.badPins >= 5) return ws.close(4001, "too many attempts");
+            send(ws, { type: "auth", wrong: !!m.pin });
+            return;
+          }
           ws.role = "viewer";
           viewers.set(ws.id, ws);
           if (broadcaster) {
@@ -191,13 +236,16 @@ function attachSignaling(server) {
             send(viewers.get(m.to), { ...m, to: undefined });
           break;
         case "answer": // зритель -> вещатель
+          if (!viewers.has(ws.id)) return;
           send(broadcaster, { ...m, from: ws.id });
           break;
         case "want-frames":
+          if (!viewers.has(ws.id)) return;
           ws.frames = !!m.on;
           updateFrames();
           break;
         case "viewer-candidate":
+          if (!viewers.has(ws.id)) return;
           send(broadcaster, {
             type: "candidate",
             candidate: m.candidate,
@@ -221,6 +269,7 @@ function attachSignaling(server) {
 (async () => {
   const ips = lanAddresses();
   LAN_IPS = ips;
+  PIN = loadPin();
   const server = https.createServer(await loadCert(ips), serveStatic);
   attachSignaling(server);
   server.listen(PORT, "0.0.0.0", () => {
@@ -231,7 +280,14 @@ function attachSignaling(server) {
         "  iPhone: не найден IP в локальной сети — подключитесь к Wi-Fi",
       );
     ips.forEach((ip) =>
-      console.log(`  iPhone (Safari): https://${ip}:${PORT}/watch`),
+      console.log(
+        `  iPhone (Safari): https://${ip}:${PORT}/watch${PIN ? "?pin=" + PIN : ""}`,
+      ),
+    );
+    console.log(
+      PIN
+        ? `\n  PIN для телефона: ${PIN}  (сменить: PIN=1234 npm start, отключить: PIN=off npm start)`
+        : "\n  PIN отключён — любой в вашей сети может смотреть.",
     );
     console.log(
       "\nSafari покажет предупреждение о сертификате: «Показать детали» → «посетить этот веб-сайт».\n",

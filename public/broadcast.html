@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Камера MacBook — вещание</title>
     <link rel="stylesheet" href="style.css" />
+    <link rel="icon" type="image/svg+xml" href="icon.svg" />
     <style>
       .wrap {
         max-width: 1040px;
@@ -139,6 +140,27 @@
         padding: 6px 12px;
         font-size: 14px;
       }
+      .pinbox {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 14px;
+        margin-bottom: 10px;
+        border-radius: 10px;
+        background: #0f131b;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .pinbox[hidden] {
+        display: none;
+      }
+      .pinbox b {
+        color: var(--text);
+        font-size: 22px;
+        letter-spacing: 0.2em;
+      }
       .hint {
         color: var(--muted);
         font-size: 14px;
@@ -194,6 +216,9 @@
         <aside class="card">
           <h2>Открыть на телефоне</h2>
           <img class="qr" id="qr" alt="QR-код" hidden />
+          <div class="pinbox" id="pinbox" hidden>
+            <span>PIN для телефона</span><b id="pinval"></b>
+          </div>
           <div id="links"></div>
           <p class="hint" id="linkHint">
             Телефон должен быть в той же Wi-Fi сети.
@@ -256,6 +281,10 @@
           return r.json();
         })
         .then(function (info) {
+          if (info.pin) {
+            $("pinval").textContent = info.pin;
+            $("pinbox").hidden = false;
+          }
           var box = $("links");
           if (!info.watchUrls.length) {
             $("linkHint").textContent =
@@ -444,7 +473,17 @@
         };
         ws.onmessage = function (ev) {
           var m = JSON.parse(ev.data);
-          if (m.type === "viewer-joined") addViewer(m.id);
+          if (m.type === "forbidden") {
+            wantLive = false;
+            ws.onclose = null;
+            ws.close();
+            setStatus(
+              "Вещать можно только с самого Mac: откройте https://localhost:" +
+                location.port +
+                "/",
+              "err",
+            );
+          } else if (m.type === "viewer-joined") addViewer(m.id);
           else if (m.type === "viewer-left") dropViewer(m.id);
           else if (m.type === "answer") onAnswer(m.from, m.sdp);
           else if (m.type === "candidate") onCandidate(m.from, m.candidate);
