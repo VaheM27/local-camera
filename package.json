@@ -1,0 +1,24 @@
+{
+  "name": "local-camera",
+  "version": "1.0.0",
+  "description": "MacBook camera -> iPhone Safari over LAN via WebRTC",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VaheM27/local-camera.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/VaheM27/local-camera/issues"
+  },
+  "homepage": "https://github.com/VaheM27/local-camera#readme",
+  "dependencies": {
+    "selfsigned": "^5.5.0",
+    "ws": "^8.22.0"
+  }
+}
