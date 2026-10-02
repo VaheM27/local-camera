@@ -103,6 +103,37 @@
         justify-content: center;
       }
       body.idle .top,
+      .bottom {
+        flex-wrap: wrap;
+      }
+      .volrow {
+        flex: 1 0 100%;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        max-width: 420px;
+        margin: 0 auto;
+        padding: 8px 16px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.16);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+      .volrow[hidden] {
+        display: none;
+      }
+      .volrow input {
+        flex: 1;
+        min-width: 0;
+        height: 28px;
+        accent-color: var(--accent);
+      }
+      .volrow span {
+        min-width: 46px;
+        text-align: right;
+        font-size: 14px;
+        font-weight: 600;
+      }
       body.idle .bottom {
         opacity: 0;
         pointer-events: none;
@@ -187,6 +218,19 @@
       >
     </div>
     <div class="bottom">
+      <div class="volrow" id="volrow" hidden>
+        <span id="volicon">🔈</span>
+        <input
+          type="range"
+          id="vol"
+          min="0"
+          max="200"
+          step="5"
+          value="100"
+          aria-label="Громкость"
+        />
+        <span id="volv">100%</span>
+      </div>
       <button class="btn round" id="sound" hidden aria-label="Звук">🔇</button>
       <button class="btn round" id="zout" aria-label="Уменьшить">−</button>
       <span class="zbadge" id="zbadge">×1</span>
@@ -236,12 +280,72 @@
       document.addEventListener("mousemove", wake);
       document.addEventListener("click", wake);
 
-      $("sound").onclick = function () {
-        v.muted = !v.muted;
-        $("sound").textContent = v.muted ? "🔇" : "🔊";
+      /* ---------- громкость ----------
+         iPhone Safari не даёт менять video.volume, поэтому звук идёт через Web Audio
+         (GainNode): регулировка 0–200% работает везде. Видео остаётся muted. */
+      var AC = window.AudioContext || window.webkitAudioContext;
+      var A = {
+        ctx: null,
+        gain: null,
+        src: null,
+        stream: null,
+        vol: 1,
+        on: false,
+      };
+      function applyVolume() {
+        if (A.gain) A.gain.gain.value = A.on ? A.vol : 0;
+        else {
+          v.muted = !A.on;
+          v.volume = Math.min(1, A.vol);
+        }
+        $("volv").textContent = Math.round(A.vol * 100) + "%";
+        var silent = !A.on || A.vol === 0;
+        $("sound").textContent = silent ? "🔇" : "🔊";
+        $("volicon").textContent = silent ? "🔇" : A.vol < 0.5 ? "🔈" : "🔉";
+      }
+      function connectAudio() {
+        // подключить аудиодорожку текущего потока к GainNode
+        if (!A.ctx || !A.stream || !A.stream.getAudioTracks().length) return;
+        try {
+          if (A.src) A.src.disconnect();
+        } catch (e) {}
+        A.src = A.ctx.createMediaStreamSource(
+          new MediaStream(A.stream.getAudioTracks()),
+        );
+        A.src.connect(A.gain);
+      }
+      function enableSound(on) {
+        // вызывать из жеста пользователя
+        A.on = on;
+        if (on && AC && !A.ctx) {
+          try {
+            A.ctx = new AC();
+            A.gain = A.ctx.createGain();
+            A.gain.connect(A.ctx.destination);
+            v.muted = true; // звук пойдёт через Web Audio
+            connectAudio();
+          } catch (e) {
+            A.ctx = A.gain = null;
+          }
+        }
+        if (on && A.ctx && A.ctx.state === "suspended") A.ctx.resume();
+        applyVolume();
         var p = v.play();
         if (p && p.catch) p.catch(function () {});
+      }
+      $("sound").onclick = function () {
+        var on = !(A.on && A.vol > 0);
+        if (on && A.vol === 0) {
+          A.vol = 1;
+          $("vol").value = 100;
+        }
+        enableSound(on);
       };
+      $("vol").oninput = function () {
+        A.vol = Number(this.value) / 100;
+        enableSound(A.vol > 0);
+      };
+
       var toastTimer = null;
       function toast(text) {
         $("toast").textContent = text;
@@ -459,6 +563,8 @@
         setFallback(false);
         v.srcObject = null;
         $("sound").hidden = true;
+        $("volrow").hidden = true;
+        A.stream = null;
         document.body.classList.remove("idle");
       }
 
@@ -493,7 +599,12 @@
           if (p && p.catch) p.catch(function () {});
           var hasAudio = s.getAudioTracks().length > 0;
           $("sound").hidden = !hasAudio;
-          $("sound").textContent = v.muted ? "🔇" : "🔊";
+          $("volrow").hidden = !hasAudio;
+          if (hasAudio) {
+            A.stream = s;
+            connectAudio();
+          }
+          applyVolume();
         };
         mine.onconnectionstatechange = function () {
           if (mine !== pc) return;
