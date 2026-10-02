@@ -1,0 +1,10 @@
+{
+  "name": "Камера MacBook",
+  "short_name": "Камера",
+  "start_url": "/watch",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#000000",
+  "theme_color": "#000000"
+}

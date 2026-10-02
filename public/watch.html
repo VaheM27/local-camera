@@ -9,6 +9,12 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="theme-color" content="#000000" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="apple-mobile-web-app-title" content="Камера" />
+    <link rel="manifest" href="manifest.webmanifest" />
     <title>Камера MacBook</title>
     <link rel="stylesheet" href="style.css" />
     <style>
@@ -23,6 +29,42 @@
         position: fixed;
         inset: 0;
         background: #000;
+        overflow: hidden;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #zoomer {
+        position: absolute;
+        inset: 0;
+        transform-origin: 0 0;
+        will-change: transform;
+      }
+      .zbadge {
+        min-width: 52px;
+        text-align: center;
+        font-size: 14px;
+        font-weight: 600;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.16);
+      }
+      .toast {
+        position: fixed;
+        left: 16px;
+        right: 16px;
+        bottom: calc(96px + env(safe-area-inset-bottom));
+        z-index: 3;
+        margin: 0 auto;
+        max-width: 360px;
+        padding: 12px 16px;
+        border-radius: 14px;
+        background: rgba(30, 34, 46, 0.95);
+        font-size: 14px;
+        text-align: center;
+      }
+      .toast[hidden] {
+        display: none;
       }
       #v,
       #c {
@@ -124,9 +166,12 @@
   </head>
   <body>
     <div id="stage">
-      <video id="v" autoplay muted playsinline webkit-playsinline></video>
-      <canvas id="c"></canvas>
+      <div id="zoomer">
+        <video id="v" autoplay muted playsinline webkit-playsinline></video>
+        <canvas id="c"></canvas>
+      </div>
     </div>
+    <div class="toast" id="toast" hidden></div>
 
     <div class="overlay" id="overlay">
       <div class="spin" id="spin"></div>
@@ -143,6 +188,9 @@
     </div>
     <div class="bottom">
       <button class="btn round" id="sound" hidden aria-label="Звук">🔇</button>
+      <button class="btn round" id="zout" aria-label="Уменьшить">−</button>
+      <span class="zbadge" id="zbadge">×1</span>
+      <button class="btn round" id="zin" aria-label="Увеличить">+</button>
       <button class="btn round" id="full" aria-label="На весь экран">⛶</button>
     </div>
 
@@ -194,18 +242,162 @@
         var p = v.play();
         if (p && p.catch) p.catch(function () {});
       };
+      var toastTimer = null;
+      function toast(text) {
+        $("toast").textContent = text;
+        $("toast").hidden = false;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(function () {
+          $("toast").hidden = true;
+        }, 6000);
+      }
       $("full").onclick = function () {
-        var el = document.documentElement;
-        if (document.fullscreenElement || document.webkitFullscreenElement) {
-          (document.exitFullscreen || document.webkitExitFullscreen).call(
-            document,
-          );
+        var d = document,
+          el = d.documentElement;
+        if (d.fullscreenElement || d.webkitFullscreenElement) {
+          (d.exitFullscreen || d.webkitExitFullscreen).call(d);
           return;
         }
         var req = el.requestFullscreen || el.webkitRequestFullscreen;
-        if (req) req.call(el);
-        else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen(); // iPhone Safari: только видео на весь экран
+        if (req) {
+          var r = req.call(el);
+          if (r && r.catch) r.catch(function () {});
+          try {
+            if (screen.orientation && screen.orientation.lock)
+              screen.orientation.lock("landscape").catch(function () {});
+          } catch (e) {}
+        } else if (window.navigator.standalone) {
+          toast("Уже на весь экран");
+        } else {
+          // iPhone Safari не умеет полноэкранный режим для страниц.
+          toast(
+            "iPhone: нажмите «Поделиться» → «На экран Домой» и откройте значок — страница запустится без адресной строки.",
+          );
+        }
       };
+
+      /* ---------- зум: щипок, перетаскивание, двойной тап, колесо, кнопки ---------- */
+      var zoomer = $("zoomer"),
+        stageEl = $("stage");
+      var Z = { s: 1, x: 0, y: 0, max: 8 };
+      function applyZoom() {
+        var W = stageEl.clientWidth,
+          H = stageEl.clientHeight;
+        Z.s = Math.min(Z.max, Math.max(1, Z.s));
+        Z.x = Math.min(0, Math.max(W * (1 - Z.s), Z.x));
+        Z.y = Math.min(0, Math.max(H * (1 - Z.s), Z.y));
+        zoomer.style.transform =
+          "translate(" + Z.x + "px," + Z.y + "px) scale(" + Z.s + ")";
+        $("zbadge").textContent = "×" + Math.round(Z.s * 10) / 10;
+      }
+      function zoomAt(px, py, factor) {
+        // зум вокруг точки экрана
+        var s2 = Math.min(Z.max, Math.max(1, Z.s * factor)),
+          k = s2 / Z.s;
+        Z.x = px - (px - Z.x) * k;
+        Z.y = py - (py - Z.y) * k;
+        Z.s = s2;
+        applyZoom();
+      }
+      var ptrs = {},
+        lastTap = 0,
+        tapMoved = false,
+        startAt = 0;
+      function ptrList() {
+        return Object.keys(ptrs).map(function (k) {
+          return ptrs[k];
+        });
+      }
+      function dist(a, b) {
+        return Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
+      }
+      stageEl.addEventListener("pointerdown", function (e) {
+        ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+        try {
+          stageEl.setPointerCapture(e.pointerId);
+        } catch (err) {}
+        if (ptrList().length === 1) {
+          tapMoved = false;
+          startAt = Date.now();
+        } else tapMoved = true;
+      });
+      stageEl.addEventListener("pointermove", function (e) {
+        var p = ptrs[e.pointerId];
+        if (!p) return;
+        var list = ptrList(),
+          nx = e.clientX,
+          ny = e.clientY;
+        if (list.length >= 2) {
+          var a = list[0],
+            b = list[1],
+            before = dist(a, b),
+            mx = (a.x + b.x) / 2,
+            my = (a.y + b.y) / 2;
+          p.x = nx;
+          p.y = ny;
+          var after = dist(a, b),
+            nmx = (a.x + b.x) / 2,
+            nmy = (a.y + b.y) / 2;
+          if (before > 0) zoomAt(nmx, nmy, after / before);
+          Z.x += nmx - mx;
+          Z.y += nmy - my;
+          applyZoom();
+        } else {
+          if (Math.abs(nx - p.x) + Math.abs(ny - p.y) > 2) tapMoved = true;
+          if (Z.s > 1) {
+            Z.x += nx - p.x;
+            Z.y += ny - p.y;
+            applyZoom();
+          }
+          p.x = nx;
+          p.y = ny;
+        }
+      });
+      function endPtr(e) {
+        if (!ptrs[e.pointerId]) return;
+        delete ptrs[e.pointerId];
+        if (
+          e.type === "pointerup" &&
+          !tapMoved &&
+          Date.now() - startAt < 300 &&
+          !ptrList().length
+        ) {
+          var now = Date.now();
+          if (now - lastTap < 320) {
+            // двойной тап: ×1 ↔ ×2.5
+            if (Z.s > 1.05) {
+              Z.x = 0;
+              Z.y = 0;
+              Z.s = 1;
+              applyZoom();
+            } else zoomAt(e.clientX, e.clientY, 2.5);
+            lastTap = 0;
+          } else lastTap = now;
+        }
+      }
+      stageEl.addEventListener("pointerup", endPtr);
+      stageEl.addEventListener("pointercancel", endPtr);
+      stageEl.addEventListener(
+        "wheel",
+        function (e) {
+          e.preventDefault();
+          zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+        },
+        { passive: false },
+      );
+      $("zin").onclick = function () {
+        zoomAt(stageEl.clientWidth / 2, stageEl.clientHeight / 2, 1.4);
+      };
+      $("zout").onclick = function () {
+        zoomAt(stageEl.clientWidth / 2, stageEl.clientHeight / 2, 1 / 1.4);
+      };
+      window.addEventListener("resize", applyZoom);
+      // iOS: не даём странице масштабироваться своим щипком.
+      ["gesturestart", "gesturechange"].forEach(function (n) {
+        document.addEventListener(n, function (e) {
+          e.preventDefault();
+        });
+      });
 
       // Не даём экрану телефона гаснуть во время просмотра.
       function keepAwake() {

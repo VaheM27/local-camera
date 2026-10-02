@@ -182,6 +182,9 @@
             <label class="switch"
               ><input type="checkbox" id="audio" /> со звуком</label
             >
+            <label class="switch" id="zoomWrap" hidden
+              >Зум камеры <input type="range" id="zoom" step="0.1"
+            /></label>
             <button class="btn" id="start">Включить камеру</button>
             <button class="btn ghost" id="stop" hidden>Остановить</button>
           </div>
@@ -277,6 +280,24 @@
         })
         .catch(function () {});
 
+      /* ---------- аппаратный зум (если камера умеет; встроенная камера MacBook — нет) ---------- */
+      function setupHwZoom() {
+        var t = stream && stream.getVideoTracks()[0];
+        var caps = t && t.getCapabilities ? t.getCapabilities() : {};
+        $("zoomWrap").hidden = !caps.zoom;
+        if (!caps.zoom) return;
+        var z = $("zoom");
+        z.min = caps.zoom.min;
+        z.max = caps.zoom.max;
+        if (caps.zoom.step) z.step = caps.zoom.step;
+        z.value = (t.getSettings && t.getSettings().zoom) || caps.zoom.min;
+        z.oninput = function () {
+          t.applyConstraints({ advanced: [{ zoom: Number(z.value) }] }).catch(
+            function () {},
+          );
+        };
+      }
+
       /* ---------- камера ---------- */
       function listCameras() {
         if (!navigator.mediaDevices.enumerateDevices) return;
@@ -328,6 +349,7 @@
             stream = s;
             $("preview").srcObject = s;
             $("ph").hidden = true;
+            setupHwZoom();
             listCameras();
           });
       }
