@@ -6,21 +6,26 @@
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#000000" />
     <title>Камера MacBook</title>
+    <link rel="stylesheet" href="style.css" />
     <style>
       html,
       body {
-        margin: 0;
         height: 100%;
+        overflow: hidden;
         background: #000;
-        color: #eee;
-        font:
-          16px -apple-system,
-          system-ui,
-          sans-serif;
+        overscroll-behavior: none;
       }
-      video,
-      canvas {
+      #stage {
+        position: fixed;
+        inset: 0;
+        background: #000;
+      }
+      #v,
+      #c {
         position: absolute;
         inset: 0;
         width: 100%;
@@ -28,37 +33,119 @@
         object-fit: contain;
         background: #000;
       }
-      canvas {
+      #c {
         display: none;
       }
-      #bar {
+      .top,
+      .bottom {
         position: fixed;
         left: 0;
         right: 0;
-        bottom: 0;
-        padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
         display: flex;
-        gap: 12px;
         align-items: center;
-        background: rgba(0, 0, 0, 0.6);
+        gap: 10px;
+        padding: 12px 16px;
+        transition: opacity 0.25s;
+        z-index: 2;
       }
-      button {
-        font: inherit;
-        padding: 8px 16px;
-        border-radius: 8px;
-        border: 0;
-        background: #2f7df6;
-        color: #fff;
+      .top {
+        top: 0;
+        padding-top: calc(12px + env(safe-area-inset-top));
+        background: linear-gradient(rgba(0, 0, 0, 0.65), transparent);
+        justify-content: space-between;
+      }
+      .bottom {
+        bottom: 0;
+        padding-bottom: calc(14px + env(safe-area-inset-bottom));
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+        justify-content: center;
+      }
+      body.idle .top,
+      body.idle .bottom {
+        opacity: 0;
+        pointer-events: none;
+      }
+      .round {
+        width: 52px;
+        height: 52px;
+        padding: 0;
+        border-radius: 50%;
+        font-size: 22px;
+        background: rgba(255, 255, 255, 0.16);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+      .round:hover {
+        background: rgba(255, 255, 255, 0.26);
+      }
+      .overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        text-align: center;
+        padding: 32px;
+        color: var(--muted);
+      }
+      .overlay[hidden] {
+        display: none;
+      }
+      .overlay .big {
+        font-size: 56px;
+      }
+      .overlay h2 {
+        margin: 0;
+        color: var(--text);
+        font-size: 20px;
+      }
+      .overlay p {
+        margin: 0;
+        max-width: 320px;
+        font-size: 15px;
+      }
+      .spin {
+        width: 40px;
+        height: 40px;
+        border: 4px solid var(--line);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
       }
     </style>
   </head>
   <body>
-    <video id="v" autoplay muted playsinline webkit-playsinline></video>
-    <canvas id="c"></canvas>
-    <div id="bar">
-      <span id="status">Подключение…</span
-      ><button id="sound" hidden>Включить звук</button>
+    <div id="stage">
+      <video id="v" autoplay muted playsinline webkit-playsinline></video>
+      <canvas id="c"></canvas>
     </div>
+
+    <div class="overlay" id="overlay">
+      <div class="spin" id="spin"></div>
+      <div class="big" id="icon" hidden>📡</div>
+      <h2 id="title">Подключение…</h2>
+      <p id="sub"></p>
+    </div>
+
+    <div class="top">
+      <span class="pill"
+        ><span class="dot" id="dot"></span
+        ><span id="status">Подключение…</span></span
+      >
+    </div>
+    <div class="bottom">
+      <button class="btn round" id="sound" hidden aria-label="Звук">🔇</button>
+      <button class="btn round" id="full" aria-label="На весь экран">⛶</button>
+    </div>
+
     <script src="common.js"></script>
     <script>
       var $ = function (id) {
@@ -73,12 +160,64 @@
         remote = false,
         fallbackTimer = null,
         inFallback = false,
-        live = false;
+        live = false,
+        idleTimer = null;
 
-      function setStatus(t) {
-        $("status").textContent = t;
+      /* ---------- интерфейс ---------- */
+      function setStatus(text, kind) {
+        $("status").textContent = text;
+        $("dot").className = "dot" + (kind ? " " + kind : "");
       }
+      // state: "connecting" | "waiting" | "playing"
+      function show(state, title, sub) {
+        $("overlay").hidden = state === "playing";
+        $("spin").hidden = state !== "connecting";
+        $("icon").hidden = state !== "waiting";
+        $("title").textContent = title || "";
+        $("sub").textContent = sub || "";
+      }
+      function wake() {
+        document.body.classList.remove("idle");
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(function () {
+          if (!$("overlay").hidden) return;
+          document.body.classList.add("idle");
+        }, 3500);
+      }
+      document.addEventListener("touchstart", wake, { passive: true });
+      document.addEventListener("mousemove", wake);
+      document.addEventListener("click", wake);
 
+      $("sound").onclick = function () {
+        v.muted = !v.muted;
+        $("sound").textContent = v.muted ? "🔇" : "🔊";
+        var p = v.play();
+        if (p && p.catch) p.catch(function () {});
+      };
+      $("full").onclick = function () {
+        var el = document.documentElement;
+        if (document.fullscreenElement || document.webkitFullscreenElement) {
+          (document.exitFullscreen || document.webkitExitFullscreen).call(
+            document,
+          );
+          return;
+        }
+        var req = el.requestFullscreen || el.webkitRequestFullscreen;
+        if (req) req.call(el);
+        else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen(); // iPhone Safari: только видео на весь экран
+      };
+
+      // Не даём экрану телефона гаснуть во время просмотра.
+      function keepAwake() {
+        if (navigator.wakeLock && navigator.wakeLock.request)
+          navigator.wakeLock.request("screen").catch(function () {});
+      }
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) keepAwake();
+      });
+      keepAwake();
+
+      /* ---------- сигналинг и WebRTC ---------- */
       function connect() {
         ws = new WebSocket(wsUrl());
         ws.binaryType = "blob";
@@ -88,26 +227,37 @@
           ws.send(JSON.stringify({ type: "viewer" }));
         };
         ws.onclose = function () {
-          setStatus("Нет связи, переподключение…");
+          reset();
+          setStatus("Нет связи", "err");
+          show(
+            "connecting",
+            "Переподключение…",
+            "Теряется связь с сервером на Mac",
+          );
           setTimeout(connect, 1500);
         };
         ws.onmessage = function (ev) {
           if (typeof ev.data !== "string") return drawFrame(ev.data);
           var m = JSON.parse(ev.data);
-          if (m.type === "waiting")
-            reset(
-              "Ждём вещание с MacBook… (на Mac откройте страницу вещания и нажмите «Включить камеру»)",
+          if (m.type === "waiting") {
+            reset();
+            setStatus("Ждём вещание", "wait");
+            show(
+              "waiting",
+              "Ждём вещание с MacBook",
+              "На Mac откройте страницу вещания и нажмите «Включить камеру»",
             );
-          else if (m.type === "live") {
+          } else if (m.type === "live") {
             live = true;
-            setStatus("Подключаемся к камере…");
+            setStatus("Подключаемся…", "wait");
+            show("connecting", "Подключаемся к камере…");
             armFallback();
           } else if (m.type === "offer") onOffer(m.sdp);
           else if (m.type === "candidate") onCandidate(m.candidate);
         };
       }
 
-      function reset(text) {
+      function reset() {
         live = false;
         if (pc) {
           pc.close();
@@ -117,16 +267,21 @@
         setFallback(false);
         v.srcObject = null;
         $("sound").hidden = true;
-        setStatus(text);
+        document.body.classList.remove("idle");
+      }
+
+      function playing(text) {
+        setStatus(text, "live");
+        show("playing");
+        wake();
       }
 
       function onOffer(sdp) {
         if (pc) pc.close();
         queue = [];
         remote = false;
-        pc = new RTCPeerConnection(RTC_CONFIG);
-        var mine = pc;
-        pc.onicecandidate = function (e) {
+        var mine = (pc = new RTCPeerConnection(RTC_CONFIG));
+        mine.onicecandidate = function (e) {
           if (e.candidate)
             ws.send(
               JSON.stringify({
@@ -135,7 +290,7 @@
               }),
             );
         };
-        pc.ontrack = function (e) {
+        mine.ontrack = function (e) {
           var s = e.streams && e.streams[0];
           if (!s) {
             s = v.srcObject || new MediaStream();
@@ -144,17 +299,20 @@
           v.srcObject = s;
           var p = v.play();
           if (p && p.catch) p.catch(function () {});
-          $("sound").hidden = !s.getAudioTracks().length;
+          var hasAudio = s.getAudioTracks().length > 0;
+          $("sound").hidden = !hasAudio;
+          $("sound").textContent = v.muted ? "🔇" : "🔊";
         };
-        pc.onconnectionstatechange = function () {
+        mine.onconnectionstatechange = function () {
           if (mine !== pc) return;
-          if (pc.connectionState === "connected") {
+          if (mine.connectionState === "connected") {
             clearTimeout(fallbackTimer);
             setFallback(false);
-            setStatus("● В эфире");
+            playing("В эфире");
           }
         };
-        pc.setRemoteDescription(sdp)
+        mine
+          .setRemoteDescription(sdp)
           .then(function () {
             remote = true;
             queue.forEach(function (c) {
@@ -179,7 +337,7 @@
         else queue.push(c);
       }
 
-      // Если WebRTC не соединился за 8 с (мобильные браузеры без mDNS и т.п.) — картинка кадрами JPEG.
+      // Если WebRTC не соединился за 8 с — картинка кадрами JPEG (без звука).
       function armFallback() {
         clearTimeout(fallbackTimer);
         fallbackTimer = setTimeout(function () {
@@ -191,9 +349,9 @@
         if (inFallback === on) return;
         inFallback = on;
         canvas.style.display = on ? "block" : "none";
-        if (ws.readyState === 1)
+        if (ws && ws.readyState === 1)
           ws.send(JSON.stringify({ type: "want-frames", on: on }));
-        if (on) setStatus("● В эфире (запасной режим, без звука)");
+        if (on) playing("В эфире · без звука");
       }
       function drawFrame(blob) {
         if (!inFallback) return;
@@ -209,11 +367,7 @@
         img.src = URL.createObjectURL(blob);
       }
 
-      $("sound").onclick = function () {
-        v.muted = false;
-        v.play();
-        $("sound").hidden = true;
-      };
+      show("connecting", "Подключение…");
       connect();
     </script>
   </body>

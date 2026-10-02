@@ -5,6 +5,7 @@ const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
 const selfsigned = require("selfsigned");
+const QRCode = require("qrcode");
 const { WebSocketServer } = require("ws");
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -14,6 +15,7 @@ const TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
 };
 
 function lanAddresses() {
@@ -68,8 +70,44 @@ async function loadCert(ips) {
   return { key: pems.private, cert: pems.cert };
 }
 
+let LAN_IPS = [];
+
 function serveStatic(req, res) {
   const url = new URL(req.url, "https://x");
+  if (url.pathname === "/info") {
+    // Адреса для телефона: localhost с другого устройства не открывается.
+    res.writeHead(200, {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    });
+    res.end(
+      JSON.stringify({
+        watchUrls: LAN_IPS.map((ip) => `https://${ip}:${PORT}/watch`),
+      }),
+    );
+    return;
+  }
+  if (url.pathname === "/qr.svg") {
+    const text = url.searchParams.get("u") || "";
+    if (!text.startsWith("https://") || text.length > 200) {
+      res.writeHead(400).end("Bad request");
+      return;
+    }
+    QRCode.toString(text, {
+      type: "svg",
+      margin: 1,
+      color: { dark: "#0b0d12", light: "#ffffff" },
+    })
+      .then((svg) => {
+        res.writeHead(200, {
+          "Content-Type": "image/svg+xml",
+          "Cache-Control": "no-store",
+        });
+        res.end(svg);
+      })
+      .catch(() => res.writeHead(500).end("Error"));
+    return;
+  }
   const name =
     url.pathname === "/"
       ? "broadcast.html"
@@ -181,6 +219,7 @@ function attachSignaling(server) {
 
 (async () => {
   const ips = lanAddresses();
+  LAN_IPS = ips;
   const server = https.createServer(await loadCert(ips), serveStatic);
   attachSignaling(server);
   server.listen(PORT, "0.0.0.0", () => {

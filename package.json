@@ -18,6 +18,7 @@
   },
   "homepage": "https://github.com/VaheM27/local-camera#readme",
   "dependencies": {
+    "qrcode": "^1.5.4",
     "selfsigned": "^5.5.0",
     "ws": "^8.22.0"
   }
