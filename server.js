@@ -8,9 +8,10 @@ const selfsigned = require("selfsigned");
 const QRCode = require("qrcode");
 const { WebSocketServer } = require("ws");
 
-const PORT = Number(process.env.PORT) || 3000;
+let PORT = Number(process.env.PORT) || 3000;
 const PUBLIC = path.join(__dirname, "public");
-const CERT_DIR = path.join(__dirname, "certs");
+// В установленном приложении __dirname только для чтения: сертификат и PIN лежат в DATA_DIR.
+const CERT_DIR = path.join(process.env.DATA_DIR || __dirname, "certs");
 const TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -177,6 +178,7 @@ function serveStatic(req, res) {
 // Сигналинг: один вещатель (Mac), много зрителей (iPhone).
 function attachSignaling(server) {
   const wss = new WebSocketServer({ server, path: "/ws" });
+  wss.on("error", () => {}); // ошибки сервера (например, занятый порт) обрабатывает start()
   let broadcaster = null;
   const viewers = new Map();
   const send = (ws, msg) =>
@@ -288,37 +290,72 @@ function attachSignaling(server) {
   });
 }
 
-(async () => {
+function listen(server, port, retries) {
+  return new Promise((resolve, reject) => {
+    const onError = (err) => {
+      server.removeListener("listening", onListening);
+      if (err.code === "EADDRINUSE" && retries > 0)
+        resolve(listen(server, port + 1, retries - 1));
+      else reject(err);
+    };
+    const onListening = () => {
+      server.removeListener("error", onError);
+      resolve(server.address().port);
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, "0.0.0.0");
+  });
+}
+
+// Запускает сервер. fallbackPorts > 0: если порт занят, пробуем следующие (для приложения).
+async function start({ fallbackPorts = 0 } = {}) {
   const ips = lanAddresses();
   LAN_IPS = ips;
   PIN = loadPin();
   HOSTS = hostNames();
   const server = https.createServer(await loadCert(ips, HOSTS), serveStatic);
   attachSignaling(server);
-  server.listen(PORT, "0.0.0.0", () => {
-    console.log("\nЛокальная камера запущена (видео не уходит в интернет)\n");
-    console.log(`  Mac (вещание):  https://localhost:${PORT}/`);
-    if (!ips.length)
+  PORT = await listen(server, PORT, fallbackPorts);
+  const q = PIN ? "?pin=" + PIN : "";
+  return {
+    server,
+    port: PORT,
+    pin: PIN,
+    localUrl: `https://localhost:${PORT}/`,
+    watchUrls: ips.map((ip) => `https://${ip}:${PORT}/watch${q}`),
+    hostUrl: HOSTS[0] ? `https://${HOSTS[0]}:${PORT}/watch${q}` : null,
+  };
+}
+
+module.exports = { start };
+
+if (require.main === module) {
+  start()
+    .then((info) => {
+      console.log("\nЛокальная камера запущена (видео не уходит в интернет)\n");
+      console.log(`  Mac (вещание):  ${info.localUrl}`);
+      if (!info.watchUrls.length)
+        console.log(
+          "  iPhone: не найден IP в локальной сети — подключитесь к Wi-Fi",
+        );
+      info.watchUrls.forEach((u) => console.log(`  iPhone (Safari): ${u}`));
+      if (info.hostUrl) console.log(`  Постоянный адрес: ${info.hostUrl}`);
       console.log(
-        "  iPhone: не найден IP в локальной сети — подключитесь к Wi-Fi",
+        info.pin
+          ? `\n  PIN для телефона: ${info.pin}  (сменить: PIN=1234 npm start, отключить: PIN=off npm start)`
+          : "\n  PIN отключён — любой в вашей сети может смотреть.",
       );
-    ips.forEach((ip) =>
       console.log(
-        `  iPhone (Safari): https://${ip}:${PORT}/watch${PIN ? "?pin=" + PIN : ""}`,
-      ),
-    );
-    HOSTS.forEach((h) =>
-      console.log(
-        `  Постоянный адрес: https://${h}:${PORT}/watch${PIN ? "?pin=" + PIN : ""}`,
-      ),
-    );
-    console.log(
-      PIN
-        ? `\n  PIN для телефона: ${PIN}  (сменить: PIN=1234 npm start, отключить: PIN=off npm start)`
-        : "\n  PIN отключён — любой в вашей сети может смотреть.",
-    );
-    console.log(
-      "\nSafari покажет предупреждение о сертификате: «Показать детали» → «посетить этот веб-сайт».\n",
-    );
-  });
-})();
+        "\nSafari покажет предупреждение о сертификате: «Показать детали» → «посетить этот веб-сайт».\n",
+      );
+    })
+    .catch((err) => {
+      console.error(
+        err.code === "EADDRINUSE"
+          ? `Порт ${PORT} занят. Другой порт: PORT=3001 npm start`
+          : err,
+      );
+      process.exit(1);
+    });
+}

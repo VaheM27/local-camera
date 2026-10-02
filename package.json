@@ -1,10 +1,12 @@
 {
   "name": "local-camera",
   "version": "1.0.0",
-  "description": "MacBook camera -> iPhone Safari over LAN via WebRTC",
-  "main": "server.js",
+  "description": "MacBook camera/screen -> phone over LAN via WebRTC (CLI and macOS app)",
+  "main": "electron/main.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "app": "electron .",
+    "dist": "electron-builder --mac --publish never"
   },
   "repository": {
     "type": "git",
@@ -21,5 +23,53 @@
     "qrcode": "^1.5.4",
     "selfsigned": "^5.5.0",
     "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.local-camera.app",
+    "productName": "Local Camera",
+    "files": [
+      "server.js",
+      "electron/**",
+      "public/**",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "mac": {
+      "category": "public.app-category.video",
+      "icon": "build/icon.png",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "extendInfo": {
+        "NSCameraUsageDescription": "Камера нужна, чтобы показывать картинку на телефоне.",
+        "NSMicrophoneUsageDescription": "Микрофон нужен, чтобы передавать звук на телефон."
+      }
+    },
+    "dmg": {
+      "title": "Local Camera"
+    }
   }
 }

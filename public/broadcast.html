@@ -847,6 +847,8 @@
       }
 
       $("start").onclick = start;
+      // Приложение для Mac: «Начинать вещание автоматически» открывает страницу с ?autostart=1.
+      if (/[?&]autostart=1/.test(location.search)) start();
       $("stop").onclick = stop;
     </script>
   </body>
