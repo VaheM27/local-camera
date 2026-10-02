@@ -13,58 +13,101 @@
 </style>
 </head>
 <body>
-<h1>Камера MacBook → iPhone</h1>
+<h1>Камера MacBook → телефон</h1>
 <button id="start">Включить камеру</button>
 <label><input type="checkbox" id="audio"> со звуком</label>
 <video id="preview" autoplay muted playsinline></video>
 <p id="status">Нажмите «Включить камеру» и разрешите доступ.</p>
-<p>На iPhone откройте: <code id="url"></code></p>
+<p>На телефоне откройте: <code id="url"></code></p>
 <script src="common.js"></script>
 <script>
-const $ = (id) => document.getElementById(id);
-const peers = new Map();
-let stream, ws;
-$('url').textContent = `${location.origin}/watch`;
+var $ = function (id) { return document.getElementById(id); };
+var peers = {}, stream, ws, framesOn = false, frameTimer = null;
+$('url').textContent = location.origin + '/watch';
 
-async function start() {
+function setStatus(t) { $('status').textContent = t; }
+
+function start() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus('Браузер не даёт доступ к камере. Откройте https://localhost:' + location.port + '/ на этом компьютере.');
+    return;
+  }
   $('start').disabled = true;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
-      audio: $('audio').checked,
-    });
-  } catch (e) { $('status').textContent = 'Нет доступа к камере: ' + e.message; $('start').disabled = false; return; }
-  $('preview').srcObject = stream;
-  connect();
+  navigator.mediaDevices.getUserMedia({
+    video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+    audio: $('audio').checked
+  }).then(function (s) {
+    stream = s;
+    $('preview').srcObject = s;
+    connect();
+  }).catch(function (e) {
+    setStatus('Нет доступа к камере: ' + e.message + '. Разрешите камеру в настройках браузера и macOS.');
+    $('start').disabled = false;
+  });
 }
 
 function connect() {
   ws = new WebSocket(wsUrl());
-  ws.onopen = () => { ws.send(JSON.stringify({ type: 'broadcaster' })); $('status').textContent = 'Вещание идёт. Зрителей: 0'; };
-  ws.onclose = () => { $('status').textContent = 'Соединение потеряно, переподключение…'; setTimeout(connect, 1500); };
-  ws.onmessage = async ({ data }) => {
-    const m = JSON.parse(data);
-    if (m.type === 'viewer-joined') await addViewer(m.id);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = function () { ws.send(JSON.stringify({ type: 'broadcaster' })); count(); };
+  ws.onclose = function () { setStatus('Соединение потеряно, переподключение…'); stopFrames(); setTimeout(connect, 1500); };
+  ws.onmessage = function (ev) {
+    var m = JSON.parse(ev.data);
+    if (m.type === 'viewer-joined') addViewer(m.id);
     else if (m.type === 'viewer-left') dropViewer(m.id);
-    else if (m.type === 'answer') await peers.get(m.from)?.setRemoteDescription(m.sdp);
-    else if (m.type === 'candidate') await peers.get(m.from)?.addIceCandidate(m.candidate).catch(() => {});
-    else if (m.type === 'replaced') { $('status').textContent = 'Вещание открыто в другой вкладке.'; ws.onclose = null; ws.close(); }
+    else if (m.type === 'answer') onAnswer(m.from, m.sdp);
+    else if (m.type === 'candidate') onCandidate(m.from, m.candidate);
+    else if (m.type === 'frames') { m.on ? startFrames() : stopFrames(); }
+    else if (m.type === 'replaced') { setStatus('Вещание открыто в другой вкладке.'); ws.onclose = null; ws.close(); }
   };
 }
 
-async function addViewer(id) {
+function addViewer(id) {
   dropViewer(id);
-  const pc = new RTCPeerConnection(RTC_CONFIG);
-  peers.set(id, pc);
-  stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-  pc.onicecandidate = (e) => e.candidate && ws.send(JSON.stringify({ type: 'candidate', to: id, candidate: e.candidate }));
-  pc.onconnectionstatechange = () => { if (['failed', 'closed'].includes(pc.connectionState)) dropViewer(id); };
-  await pc.setLocalDescription(await pc.createOffer());
-  ws.send(JSON.stringify({ type: 'offer', to: id, sdp: pc.localDescription }));
+  var pc = new RTCPeerConnection(RTC_CONFIG);
+  var p = { pc: pc, queue: [], remote: false };
+  peers[id] = p;
+  stream.getTracks().forEach(function (t) { pc.addTrack(t, stream); });
+  pc.onicecandidate = function (e) { if (e.candidate) ws.send(JSON.stringify({ type: 'candidate', to: id, candidate: e.candidate })); };
+  pc.onconnectionstatechange = function () { if (pc.connectionState === 'failed' || pc.connectionState === 'closed') dropViewer(id); };
+  pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).then(function () {
+    ws.send(JSON.stringify({ type: 'offer', to: id, sdp: pc.localDescription }));
+  }).catch(function () {});
   count();
 }
-function dropViewer(id) { peers.get(id)?.close(); peers.delete(id); count(); }
-function count() { if (stream) $('status').textContent = `Вещание идёт. Зрителей: ${peers.size}`; }
+function onAnswer(id, sdp) {
+  var p = peers[id]; if (!p) return;
+  p.pc.setRemoteDescription(sdp).then(function () {
+    p.remote = true;
+    p.queue.forEach(function (c) { p.pc.addIceCandidate(c).catch(function () {}); });
+    p.queue = [];
+  }).catch(function () {});
+}
+function onCandidate(id, c) {
+  var p = peers[id]; if (!p || !c) return;
+  if (p.remote) p.pc.addIceCandidate(c).catch(function () {}); else p.queue.push(c);
+}
+function dropViewer(id) { if (peers[id]) { peers[id].pc.close(); delete peers[id]; } count(); }
+function count() { if (stream) setStatus('Вещание идёт. Зрителей: ' + Object.keys(peers).length + (framesOn ? ' (есть зритель в запасном режиме без звука)' : '')); }
+
+// Запасной режим: JPEG-кадры через WebSocket для устройств, где WebRTC не соединился.
+function startFrames() {
+  framesOn = true; count();
+  if (frameTimer) return;
+  var video = $('preview'), canvas = document.createElement('canvas'), ctx = canvas.getContext('2d'), busy = false;
+  frameTimer = setInterval(function () {
+    if (busy || !video.videoWidth || ws.readyState !== 1) return;
+    var w = Math.min(960, video.videoWidth);
+    canvas.width = w; canvas.height = Math.round(w * video.videoHeight / video.videoWidth);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    busy = true;
+    canvas.toBlob(function (b) {
+      busy = false;
+      if (b && ws.readyState === 1 && ws.bufferedAmount < 1e6) ws.send(b);
+    }, 'image/jpeg', 0.6);
+  }, 80);
+}
+function stopFrames() { framesOn = false; if (frameTimer) { clearInterval(frameTimer); frameTimer = null; } if (stream) count(); }
 
 $('start').onclick = start;
 </script>

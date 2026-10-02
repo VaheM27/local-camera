@@ -62,10 +62,15 @@ function attachSignaling(server) {
   let broadcaster = null;
   const viewers = new Map();
   const send = (ws, msg) => ws && ws.readyState === 1 && ws.send(JSON.stringify(msg));
+  const updateFrames = () => send(broadcaster, { type: 'frames', on: [...viewers.values()].some((v) => v.frames) });
 
   wss.on('connection', (ws) => {
     ws.id = crypto.randomUUID();
-    ws.on('message', (raw) => {
+    ws.on('message', (raw, isBinary) => {
+      if (isBinary) { // JPEG-кадры запасного режима: вещатель -> зрители с включённым fallback
+        if (ws === broadcaster) viewers.forEach((v) => v.frames && v.readyState === 1 && v.bufferedAmount < 1e6 && v.send(raw, { binary: true }));
+        return;
+      }
       let m;
       try { m = JSON.parse(raw); } catch { return; }
       switch (m.type) {
@@ -73,6 +78,7 @@ function attachSignaling(server) {
           if (broadcaster && broadcaster !== ws) send(broadcaster, { type: 'replaced' });
           broadcaster = ws; ws.role = 'broadcaster';
           viewers.forEach((v) => { send(v, { type: 'live' }); send(ws, { type: 'viewer-joined', id: v.id }); });
+          updateFrames();
           break;
         case 'viewer':
           ws.role = 'viewer'; viewers.set(ws.id, ws);
@@ -85,6 +91,9 @@ function attachSignaling(server) {
         case 'answer': // зритель -> вещатель
           send(broadcaster, { ...m, from: ws.id });
           break;
+        case 'want-frames':
+          ws.frames = !!m.on; updateFrames();
+          break;
         case 'viewer-candidate':
           send(broadcaster, { type: 'candidate', candidate: m.candidate, from: ws.id });
           break;
@@ -92,7 +101,7 @@ function attachSignaling(server) {
     });
     ws.on('close', () => {
       if (ws === broadcaster) { broadcaster = null; viewers.forEach((v) => send(v, { type: 'waiting' })); }
-      else if (viewers.delete(ws.id)) send(broadcaster, { type: 'viewer-left', id: ws.id });
+      else if (viewers.delete(ws.id)) { send(broadcaster, { type: 'viewer-left', id: ws.id }); updateFrames(); }
     });
   });
 }
