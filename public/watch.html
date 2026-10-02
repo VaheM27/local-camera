@@ -75,6 +75,29 @@
         border: 1px solid var(--line);
         border-radius: 12px;
       }
+      .talkrow {
+        flex: 1 0 100%;
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+      }
+      .talkrow[hidden] {
+        display: none;
+      }
+      .talkrow .btn {
+        flex: 1;
+        max-width: 200px;
+        padding: 10px 12px;
+        border-radius: 999px;
+        font-size: 15px;
+        background: rgba(255, 255, 255, 0.16);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+      .talkrow .btn.active {
+        background: var(--ok);
+        color: #052e13;
+      }
       .toast {
         position: fixed;
         left: 16px;
@@ -256,6 +279,10 @@
       >
     </div>
     <div class="bottom">
+      <div class="talkrow" id="talkrow" hidden>
+        <button class="btn" id="talk">🎙 Говорить</button>
+        <button class="btn" id="mycam">📹 Моя камера</button>
+      </div>
       <div class="volrow" id="volrow" hidden>
         <span id="volicon">🔈</span>
         <input
@@ -387,6 +414,131 @@
       $("vol").oninput = function () {
         A.vol = Number(this.value) / 100;
         enableSound(A.vol > 0);
+      };
+
+      /* ---------- обратный канал: микрофон/камера телефона -> Mac ---------- */
+      var back = {
+        pc: null,
+        stream: null,
+        mic: false,
+        cam: false,
+        remote: false,
+        queue: [],
+      };
+      function refreshBack() {
+        $("talk").classList.toggle("active", back.mic);
+        $("mycam").classList.toggle("active", back.cam);
+        $("talk").textContent = back.mic
+          ? "🎙 Микрофон включён"
+          : "🎙 Говорить";
+        $("mycam").textContent = back.cam
+          ? "📹 Камера включена"
+          : "📹 Моя камера";
+      }
+      function backStop() {
+        if (back.pc) {
+          back.pc.close();
+          back.pc = null;
+        }
+        if (back.stream) {
+          back.stream.getTracks().forEach(function (t) {
+            t.stop();
+          });
+          back.stream = null;
+        }
+        back.remote = false;
+        back.queue = [];
+      }
+      // Пересоздаём соединение под текущий набор «микрофон / камера».
+      function backUpdate() {
+        backStop();
+        if (!back.mic && !back.cam) {
+          if (ws && ws.readyState === 1)
+            ws.send(JSON.stringify({ type: "back-stop" }));
+          return Promise.resolve();
+        }
+        return navigator.mediaDevices
+          .getUserMedia({
+            audio: back.mic,
+            video: back.cam
+              ? { facingMode: "user", width: { ideal: 640 } }
+              : false,
+          })
+          .then(function (s) {
+            back.stream = s;
+            var pc = (back.pc = new RTCPeerConnection(RTC_CONFIG));
+            s.getTracks().forEach(function (t) {
+              pc.addTrack(t, s);
+            });
+            pc.onicecandidate = function (e) {
+              if (e.candidate && ws.readyState === 1)
+                ws.send(
+                  JSON.stringify({
+                    type: "back-candidate",
+                    candidate: e.candidate,
+                  }),
+                );
+            };
+            return pc
+              .createOffer()
+              .then(function (o) {
+                return pc.setLocalDescription(o);
+              })
+              .then(function () {
+                ws.send(
+                  JSON.stringify({
+                    type: "back-offer",
+                    sdp: pc.localDescription,
+                  }),
+                );
+              });
+          });
+      }
+      function onBackAnswer(sdp) {
+        var pc = back.pc;
+        if (!pc) return;
+        pc.setRemoteDescription(sdp)
+          .then(function () {
+            back.remote = true;
+            back.queue.forEach(function (c) {
+              pc.addIceCandidate(c).catch(function () {});
+            });
+            back.queue = [];
+          })
+          .catch(function () {});
+      }
+      function onBackIce(c) {
+        if (!c || !back.pc) return;
+        if (back.remote) back.pc.addIceCandidate(c).catch(function () {});
+        else back.queue.push(c);
+      }
+      function toggleBack(kind) {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          toast(
+            "Браузер не дал доступ к микрофону и камере — откройте страницу по https.",
+          );
+          return;
+        }
+        var prev = { mic: back.mic, cam: back.cam };
+        back[kind] = !back[kind];
+        refreshBack();
+        backUpdate().catch(function (e) {
+          back.mic = prev.mic;
+          back.cam = prev.cam;
+          refreshBack();
+          toast(
+            "Нет доступа к " +
+              (kind === "mic" ? "микрофону" : "камере") +
+              (e && e.message ? ": " + e.message : ""),
+          );
+          backUpdate().catch(function () {});
+        });
+      }
+      $("talk").onclick = function () {
+        toggleBack("mic");
+      };
+      $("mycam").onclick = function () {
+        toggleBack("cam");
       };
 
       var toastTimer = null;
@@ -650,7 +802,9 @@
             setStatus("Подключаемся…", "wait");
             show("connecting", "Подключаемся к камере…");
             armFallback();
-          } else if (m.type === "offer") onOffer(m.sdp);
+          } else if (m.type === "back-answer") onBackAnswer(m.sdp);
+          else if (m.type === "back-ice") onBackIce(m.candidate);
+          else if (m.type === "offer") onOffer(m.sdp);
           else if (m.type === "candidate") onCandidate(m.candidate);
         };
       }
@@ -667,12 +821,17 @@
         $("sound").hidden = true;
         $("volrow").hidden = true;
         A.stream = null;
+        backStop();
+        back.mic = back.cam = false;
+        refreshBack();
+        $("talkrow").hidden = true;
         document.body.classList.remove("idle");
       }
 
       function playing(text) {
         setStatus(text, "live");
         show("playing");
+        $("talkrow").hidden = inFallback; // обратный канал тоже на WebRTC
         wake();
       }
 

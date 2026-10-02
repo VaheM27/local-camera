@@ -172,6 +172,55 @@
         color: var(--muted);
         font-size: 14px;
       }
+      .switch[hidden] {
+        display: none;
+      }
+      .stage video.screen {
+        transform: none;
+      }
+      .wide {
+        grid-column: 1 / -1;
+      }
+      .tiles {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+      .tile {
+        position: relative;
+        width: 240px;
+        aspect-ratio: 4 / 3;
+        background: #000;
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      .tile video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .tile span {
+        position: absolute;
+        left: 8px;
+        bottom: 8px;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 13px;
+        background: rgba(0, 0, 0, 0.6);
+      }
+      .tile button {
+        position: absolute;
+        inset: 0;
+        margin: auto;
+        width: 70%;
+        height: 40px;
+        padding: 0 8px;
+      }
+      .link small {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+      }
       .steps li {
         margin: 4px 0;
       }
@@ -194,10 +243,14 @@
             <video id="preview" autoplay muted playsinline></video>
             <div class="placeholder" id="ph">
               <div class="big">🎥</div>
-              <div>Нажмите «Включить камеру»</div>
+              <div>Выберите источник и нажмите «Начать вещание»</div>
             </div>
           </div>
           <div class="controls">
+            <select id="source" title="Что показывать">
+              <option value="camera">📷 Камера</option>
+              <option value="screen">🖥 Экран Mac</option>
+            </select>
             <select id="cam" title="Камера" disabled>
               <option>Камера по умолчанию</option>
             </select>
@@ -207,10 +260,15 @@
             <label class="switch" id="zoomWrap" hidden
               >Зум камеры <input type="range" id="zoom" step="0.1"
             /></label>
-            <button class="btn" id="start">Включить камеру</button>
+            <button class="btn" id="start">Начать вещание</button>
             <button class="btn ghost" id="stop" hidden>Остановить</button>
           </div>
           <p class="hint" id="viewers">Зрителей: 0</p>
+        </section>
+
+        <section class="card wide" id="backCard" hidden>
+          <h2>С телефона (микрофон и камера)</h2>
+          <div class="tiles" id="tiles"></div>
         </section>
 
         <aside class="card">
@@ -229,7 +287,7 @@
               Safari предупредит о сертификате → «Показать детали» → «посетить
               сайт»
             </li>
-            <li>Включите камеру здесь — картинка появится на телефоне</li>
+            <li>Начните вещание здесь — картинка появится на телефоне</li>
           </ol>
         </aside>
       </div>
@@ -308,6 +366,29 @@
             row.appendChild(btn);
             box.appendChild(row);
           });
+          if (info.hostUrl) {
+            var hrow = document.createElement("div");
+            hrow.className = "link";
+            var hcode = document.createElement("code");
+            hcode.textContent = info.hostUrl;
+            var hsmall = document.createElement("small");
+            hsmall.textContent = "постоянный адрес — не зависит от смены IP";
+            var hwrap = document.createElement("div");
+            hwrap.style.flex = "1";
+            hwrap.style.minWidth = "0";
+            hcode.style.display = "block";
+            hwrap.appendChild(hcode);
+            hwrap.appendChild(hsmall);
+            var hbtn = document.createElement("button");
+            hbtn.className = "btn ghost";
+            hbtn.textContent = "Копировать";
+            hbtn.onclick = function () {
+              copy(info.hostUrl, hbtn);
+            };
+            hrow.appendChild(hwrap);
+            hrow.appendChild(hbtn);
+            box.appendChild(hrow);
+          }
         })
         .catch(function () {});
 
@@ -349,8 +430,48 @@
             if (d.deviceId === current) o.selected = true;
             sel.appendChild(o);
           });
-          sel.disabled = cams.length < 2;
+          sel.disabled = cams.length < 2 || $("source").value === "screen";
         });
+      }
+
+      var prevSource = "camera";
+      function getSourceStream() {
+        var md = navigator.mediaDevices,
+          wantAudio = $("audio").checked;
+        if ($("source").value === "screen") {
+          if (!md.getDisplayMedia)
+            return Promise.reject(
+              new Error("браузер не умеет передавать экран"),
+            );
+          return md
+            .getDisplayMedia({
+              video: { frameRate: { ideal: 30 } },
+              audio: false,
+            })
+            .then(function (screen) {
+              if (!wantAudio) return screen;
+              // Звук при показе экрана — с микрофона; если доступа нет, идёт только картинка.
+              return md.getUserMedia({ audio: true }).then(
+                function (mic) {
+                  mic.getAudioTracks().forEach(function (t) {
+                    screen.addTrack(t);
+                  });
+                  return screen;
+                },
+                function () {
+                  return screen;
+                },
+              );
+            });
+        }
+        var deviceId = $("cam").disabled ? null : $("cam").value;
+        var video = {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 },
+        };
+        if (deviceId) video.deviceId = { exact: deviceId };
+        return md.getUserMedia({ video: video, audio: wantAudio });
       }
 
       function openCamera() {
@@ -363,31 +484,35 @@
           );
           return Promise.reject();
         }
-        var deviceId = $("cam").disabled ? null : $("cam").value;
-        var video = {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30 },
-        };
-        if (deviceId) video.deviceId = { exact: deviceId };
-        return navigator.mediaDevices
-          .getUserMedia({ video: video, audio: $("audio").checked })
-          .then(function (s) {
-            if (stream)
-              stream.getTracks().forEach(function (t) {
-                t.stop();
-              });
-            stream = s;
-            $("preview").srcObject = s;
-            $("ph").hidden = true;
-            setupHwZoom();
-            listCameras();
-          });
+        var screen = $("source").value === "screen";
+        return getSourceStream().then(function (s) {
+          if (stream)
+            stream.getTracks().forEach(function (t) {
+              t.stop();
+            });
+          stream = s;
+          prevSource = $("source").value;
+          var vt = s.getVideoTracks()[0];
+          if (screen && vt) {
+            vt.contentHint = "detail"; // чёткий текст важнее плавности
+            vt.onended = stop; // пользователь нажал «Остановить показ» в браузере
+          }
+          $("preview").className = screen ? "screen" : "";
+          $("preview").srcObject = s;
+          $("ph").hidden = true;
+          setupHwZoom();
+          listCameras();
+        });
       }
 
       function start() {
         $("start").disabled = true;
-        setStatus("Запрашиваем доступ к камере…", "wait");
+        setStatus(
+          $("source").value === "screen"
+            ? "Выберите окно или экран…"
+            : "Запрашиваем доступ к камере…",
+          "wait",
+        );
         openCamera()
           .then(function () {
             wantLive = true;
@@ -397,7 +522,7 @@
           })
           .catch(function (e) {
             if (e && e.message)
-              setStatus("Нет доступа к камере: " + e.message, "err");
+              setStatus("Не удалось начать: " + e.message, "err");
             $("start").disabled = false;
           });
       }
@@ -406,6 +531,7 @@
         wantLive = false;
         stopFrames();
         Object.keys(peers).forEach(dropViewer);
+        Object.keys(backs).forEach(dropBack);
         if (ws) {
           ws.onclose = null;
           ws.close();
@@ -451,11 +577,14 @@
             });
           })
           .catch(function (e) {
-            if (e && e.message)
+            $("source").value = prevSource; // выбор окна отменён — остаёмся на прежнем источнике
+            listCameras();
+            if (e && e.message && e.name !== "NotAllowedError")
               setStatus("Не удалось сменить: " + e.message, "err");
           });
       }
       $("cam").onchange = restartCamera;
+      $("source").onchange = restartCamera;
       $("audio").onchange = restartCamera;
 
       /* ---------- сигналинг ---------- */
@@ -485,6 +614,10 @@
             );
           } else if (m.type === "viewer-joined") addViewer(m.id);
           else if (m.type === "viewer-left") dropViewer(m.id);
+          else if (m.type === "back-offer") onBackOffer(m.from, m.sdp);
+          else if (m.type === "back-candidate")
+            onBackCandidate(m.from, m.candidate);
+          else if (m.type === "back-stop") dropBack(m.from);
           else if (m.type === "answer") onAnswer(m.from, m.sdp);
           else if (m.type === "candidate") onCandidate(m.from, m.candidate);
           else if (m.type === "frames") {
@@ -564,7 +697,10 @@
           peers[id].pc.close();
           delete peers[id];
         }
-        if (!silent) count();
+        if (!silent) {
+          dropBack(id);
+          count();
+        }
       }
       function count() {
         if (!stream) return;
@@ -574,6 +710,102 @@
           "Зрителей: " +
           n +
           (framesOn ? " · есть зритель в запасном режиме (без звука)" : "");
+      }
+
+      /* ---------- обратный канал: микрофон и камера телефона -> Mac ---------- */
+      var backs = {};
+      function backTile(id) {
+        var tile = document.createElement("div");
+        tile.className = "tile";
+        var v = document.createElement("video");
+        v.autoplay = true;
+        v.playsInline = true;
+        var label = document.createElement("span");
+        label.textContent = "Телефон";
+        tile.appendChild(v);
+        tile.appendChild(label);
+        $("tiles").appendChild(tile);
+        $("backCard").hidden = false;
+        return { tile: tile, video: v, label: label };
+      }
+      function onBackOffer(id, sdp) {
+        dropBack(id);
+        var pc = new RTCPeerConnection(RTC_CONFIG);
+        var t = backTile(id);
+        var b = { pc: pc, queue: [], remote: false, ui: t };
+        backs[id] = b;
+        pc.onicecandidate = function (e) {
+          if (e.candidate && ws && ws.readyState === 1)
+            ws.send(
+              JSON.stringify({
+                type: "back-ice",
+                to: id,
+                candidate: e.candidate,
+              }),
+            );
+        };
+        pc.ontrack = function (e) {
+          var s = e.streams && e.streams[0];
+          if (!s) {
+            s = t.video.srcObject || new MediaStream();
+            s.addTrack(e.track);
+          }
+          t.video.srcObject = s;
+          var hasVideo = s.getVideoTracks().length > 0;
+          t.label.textContent = hasVideo
+            ? "📹 Камера телефона"
+            : "🎙 Микрофон телефона";
+          if (!hasVideo) t.tile.style.aspectRatio = "auto";
+          var p = t.video.play();
+          if (p && p.catch)
+            p.catch(function () {
+              // браузер не разрешил звук без нажатия
+              var btn = document.createElement("button");
+              btn.className = "btn";
+              btn.textContent = "▶ Включить звук";
+              btn.onclick = function () {
+                t.video.play();
+                btn.remove();
+              };
+              t.tile.appendChild(btn);
+            });
+        };
+        pc.setRemoteDescription(sdp)
+          .then(function () {
+            b.remote = true;
+            b.queue.forEach(function (c) {
+              pc.addIceCandidate(c).catch(function () {});
+            });
+            b.queue = [];
+            return pc.createAnswer();
+          })
+          .then(function (a) {
+            return pc.setLocalDescription(a);
+          })
+          .then(function () {
+            ws.send(
+              JSON.stringify({
+                type: "back-answer",
+                to: id,
+                sdp: pc.localDescription,
+              }),
+            );
+          })
+          .catch(function () {});
+      }
+      function onBackCandidate(id, c) {
+        var b = backs[id];
+        if (!b || !c) return;
+        if (b.remote) b.pc.addIceCandidate(c).catch(function () {});
+        else b.queue.push(c);
+      }
+      function dropBack(id) {
+        var b = backs[id];
+        if (!b) return;
+        b.pc.close();
+        b.ui.tile.remove();
+        delete backs[id];
+        if (!Object.keys(backs).length) $("backCard").hidden = true;
       }
 
       /* ---------- запасной режим: JPEG-кадры через WebSocket ---------- */

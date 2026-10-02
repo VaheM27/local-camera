@@ -27,15 +27,22 @@ function lanAddresses() {
     .map((i) => i.address);
 }
 
-async function loadCert(ips) {
+// Постоянный адрес вида macbook.local: macOS сам объявляет его в сети (Bonjour), IP может меняться.
+function hostNames() {
+  const h = (process.env.HOST_NAME || os.hostname() || "").trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9.-]*$/.test(h) || h === "localhost") return [];
+  return [h.includes(".") ? h : `${h}.local`];
+}
+
+async function loadCert(ips, hosts) {
   const keyFile = path.join(CERT_DIR, "key.pem");
   const certFile = path.join(CERT_DIR, "cert.pem");
   const ipsFile = path.join(CERT_DIR, "ips.json");
+  const want = JSON.stringify({ ips, hosts });
   const same = () => {
     try {
       return (
-        JSON.stringify(JSON.parse(fs.readFileSync(ipsFile, "utf8"))) ===
-        JSON.stringify(ips)
+        JSON.stringify(JSON.parse(fs.readFileSync(ipsFile, "utf8"))) === want
       );
     } catch {
       return false;
@@ -47,6 +54,7 @@ async function loadCert(ips) {
   const altNames = [
     { type: 2, value: "localhost" },
     { type: 7, ip: "127.0.0.1" },
+    ...hosts.map((value) => ({ type: 2, value })),
     ...ips.map((ip) => ({ type: 7, ip })),
   ];
   const notBeforeDate = new Date();
@@ -68,11 +76,12 @@ async function loadCert(ips) {
   fs.mkdirSync(CERT_DIR, { recursive: true });
   fs.writeFileSync(keyFile, pems.private);
   fs.writeFileSync(certFile, pems.cert);
-  fs.writeFileSync(ipsFile, JSON.stringify(ips));
+  fs.writeFileSync(ipsFile, want);
   return { key: pems.private, cert: pems.cert };
 }
 
 let LAN_IPS = [];
+let HOSTS = [];
 
 // PIN для зрителей: PIN=1234 npm start, PIN=off — без пароля; иначе случайный, сохраняется в certs/pin.txt.
 function loadPin() {
@@ -115,6 +124,7 @@ function serveStatic(req, res) {
     res.end(
       JSON.stringify({
         watchUrls: LAN_IPS.map((ip) => `https://${ip}:${PORT}/watch${q}`),
+        hostUrl: HOSTS[0] ? `https://${HOSTS[0]}:${PORT}/watch${q}` : null,
         pin: local ? PIN : null, // PIN видит только Mac
         local,
       }),
@@ -239,6 +249,18 @@ function attachSignaling(server) {
           if (!viewers.has(ws.id)) return;
           send(broadcaster, { ...m, from: ws.id });
           break;
+        // Обратный канал: телефон отправляет на Mac свой микрофон/камеру.
+        case "back-offer":
+        case "back-candidate":
+        case "back-stop": // зритель -> вещатель
+          if (!viewers.has(ws.id)) return;
+          send(broadcaster, { ...m, from: ws.id });
+          break;
+        case "back-answer":
+        case "back-ice": // вещатель -> зритель
+          if (ws === broadcaster)
+            send(viewers.get(m.to), { ...m, to: undefined });
+          break;
         case "want-frames":
           if (!viewers.has(ws.id)) return;
           ws.frames = !!m.on;
@@ -270,7 +292,8 @@ function attachSignaling(server) {
   const ips = lanAddresses();
   LAN_IPS = ips;
   PIN = loadPin();
-  const server = https.createServer(await loadCert(ips), serveStatic);
+  HOSTS = hostNames();
+  const server = https.createServer(await loadCert(ips, HOSTS), serveStatic);
   attachSignaling(server);
   server.listen(PORT, "0.0.0.0", () => {
     console.log("\nЛокальная камера запущена (видео не уходит в интернет)\n");
@@ -282,6 +305,11 @@ function attachSignaling(server) {
     ips.forEach((ip) =>
       console.log(
         `  iPhone (Safari): https://${ip}:${PORT}/watch${PIN ? "?pin=" + PIN : ""}`,
+      ),
+    );
+    HOSTS.forEach((h) =>
+      console.log(
+        `  Постоянный адрес: https://${h}:${PORT}/watch${PIN ? "?pin=" + PIN : ""}`,
       ),
     );
     console.log(
