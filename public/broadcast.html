@@ -225,6 +225,8 @@
       function setStatus(text, kind) {
         $("status").textContent = text;
         $("dot").className = "dot" + (kind ? " " + kind : "");
+        $("dot").parentNode.className =
+          "pill" + (kind === "live" ? " live" : "");
       }
 
       /* ---------- ссылки для телефона ---------- */
