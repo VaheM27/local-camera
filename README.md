@@ -85,6 +85,8 @@ npm start
 - Меню значка: PIN, «Скопировать ссылку для телефона», «Запускать при входе в систему», «Начинать вещание автоматически» (камера включится сама, окно при входе в систему не показывается).
 - Сертификат, PIN и настройки хранятся в `~/Library/Application Support/local-camera/`.
 
+**Если сборка падает с `ERR_REQUIRE_ESM`:** сборщику нужен Node 22.12+ (или 20.19+), а у вас старее. `install-app.command` теперь сам берёт временный Node 22 для сборки. Если собираете вручную — обновите Node (`brew upgrade node` или nodejs.org) или запустите: `npx -y -p node@22 -c "node node_modules/.bin/electron-builder --mac dir --publish never"`. Сам запущенный Local Camera Node не требует.
+
 **Собрать самому** (на Mac): `npm install && npm run dist` — файлы появятся в `dist/`. Запуск без сборки: `npm run app`.
 
 ## Смотреть из другой сети (с работы, из поездки) — через Tailscale
