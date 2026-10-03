@@ -21,6 +21,12 @@ const TYPES = {
   ".webmanifest": "application/manifest+json",
 };
 
+// Tailscale раздаёт адреса из 100.64.0.0/10 — по ним Mac виден из любой сети.
+function isTailscaleIp(ip) {
+  const [a, b] = String(ip).split(".").map(Number);
+  return a === 100 && b >= 64 && b <= 127;
+}
+
 function lanAddresses() {
   return Object.values(os.networkInterfaces())
     .flat()
@@ -124,7 +130,12 @@ function serveStatic(req, res) {
     const q = PIN !== null && local ? `?pin=${PIN}` : "";
     res.end(
       JSON.stringify({
-        watchUrls: LAN_IPS.map((ip) => `https://${ip}:${PORT}/watch${q}`),
+        watchUrls: LAN_IPS.filter((ip) => !isTailscaleIp(ip)).map(
+          (ip) => `https://${ip}:${PORT}/watch${q}`,
+        ),
+        tailscaleUrls: LAN_IPS.filter(isTailscaleIp).map(
+          (ip) => `https://${ip}:${PORT}/watch${q}`,
+        ),
         hostUrl: HOSTS[0] ? `https://${HOSTS[0]}:${PORT}/watch${q}` : null,
         pin: local ? PIN : null, // PIN видит только Mac
         local,
@@ -176,8 +187,40 @@ function serveStatic(req, res) {
 }
 
 // Сигналинг: один вещатель (Mac), много зрителей (iPhone).
+// Ограничение подбора PIN по IP-адресу: 5 неверных попыток → блокировка на 10 минут.
+const PIN_MAX_FAILS = 5;
+const PIN_LOCK_MS = 10 * 60 * 1000;
+const pinFails = new Map(); // ip -> { fails, lockedUntil }
+const pinLockedFor = (ip) => {
+  const r = pinFails.get(ip);
+  return r && r.lockedUntil > Date.now() ? r.lockedUntil - Date.now() : 0;
+};
+const pinFailed = (ip) => {
+  const r = pinFails.get(ip) || { fails: 0, lockedUntil: 0 };
+  if (r.lockedUntil && r.lockedUntil <= Date.now()) r.fails = 0; // блокировка прошла
+  r.fails++;
+  if (r.fails >= PIN_MAX_FAILS) r.lockedUntil = Date.now() + PIN_LOCK_MS;
+  pinFails.set(ip, r);
+};
+setInterval(() => {
+  for (const [ip, r] of pinFails)
+    if (r.lockedUntil <= Date.now() && !r.fails) pinFails.delete(ip);
+}, 60 * 1000).unref();
+
 function attachSignaling(server) {
-  const wss = new WebSocketServer({ server, path: "/ws" });
+  const wss = new WebSocketServer({
+    server,
+    path: "/ws",
+    // Защита от чужих сайтов: страница в браузере всегда присылает Origin, он должен совпадать с адресом сервера.
+    verifyClient: ({ origin, req }) => {
+      if (!origin) return true; // не браузер (скрипты, тесты): остаются PIN и проверка «вещать только с Mac»
+      try {
+        return new URL(origin).host === req.headers.host;
+      } catch {
+        return false;
+      }
+    },
+  });
   wss.on("error", () => {}); // ошибки сервера (например, занятый порт) обрабатывает start()
   let broadcaster = null;
   const viewers = new Map();
@@ -192,7 +235,7 @@ function attachSignaling(server) {
   wss.on("connection", (ws, req) => {
     ws.id = crypto.randomUUID();
     ws.local = isLocal(req.socket.remoteAddress);
-    ws.badPins = 0;
+    ws.ip = String(req.socket.remoteAddress || "").replace(/^::ffff:/, "");
     ws.on("message", (raw, isBinary) => {
       if (isBinary) {
         // JPEG-кадры запасного режима: вещатель -> зрители с включённым fallback
@@ -229,12 +272,29 @@ function attachSignaling(server) {
           updateFrames();
           break;
         case "viewer":
+          {
+            const wait = pinLockedFor(ws.ip);
+            if (wait) {
+              send(ws, {
+                type: "auth",
+                locked: true,
+                wait: Math.ceil(wait / 1000),
+              });
+              return;
+            }
+          }
           if (!pinOk(m.pin)) {
-            if (m.pin) ws.badPins++;
-            if (ws.badPins >= 5) return ws.close(4001, "too many attempts");
-            send(ws, { type: "auth", wrong: !!m.pin });
+            if (m.pin) pinFailed(ws.ip);
+            const wait = pinLockedFor(ws.ip);
+            send(
+              ws,
+              wait
+                ? { type: "auth", locked: true, wait: Math.ceil(wait / 1000) }
+                : { type: "auth", wrong: !!m.pin },
+            );
             return;
           }
+          pinFails.delete(ws.ip);
           ws.role = "viewer";
           viewers.set(ws.id, ws);
           if (broadcaster) {
@@ -323,12 +383,17 @@ async function start({ fallbackPorts = 0 } = {}) {
     port: PORT,
     pin: PIN,
     localUrl: `https://localhost:${PORT}/`,
-    watchUrls: ips.map((ip) => `https://${ip}:${PORT}/watch${q}`),
+    watchUrls: ips
+      .filter((ip) => !isTailscaleIp(ip))
+      .map((ip) => `https://${ip}:${PORT}/watch${q}`),
+    tailscaleUrls: ips
+      .filter(isTailscaleIp)
+      .map((ip) => `https://${ip}:${PORT}/watch${q}`),
     hostUrl: HOSTS[0] ? `https://${HOSTS[0]}:${PORT}/watch${q}` : null,
   };
 }
 
-module.exports = { start };
+module.exports = { start, isTailscaleIp };
 
 if (require.main === module) {
   start()
@@ -341,6 +406,13 @@ if (require.main === module) {
         );
       info.watchUrls.forEach((u) => console.log(`  iPhone (Safari): ${u}`));
       if (info.hostUrl) console.log(`  Постоянный адрес: ${info.hostUrl}`);
+      info.tailscaleUrls.forEach((u) =>
+        console.log(`  Из любой сети (Tailscale): ${u}`),
+      );
+      if (!info.tailscaleUrls.length)
+        console.log(
+          "  Из другой сети: установите Tailscale на Mac и телефон — адрес появится здесь",
+        );
       console.log(
         info.pin
           ? `\n  PIN для телефона: ${info.pin}  (сменить: PIN=1234 npm start, отключить: PIN=off npm start)`

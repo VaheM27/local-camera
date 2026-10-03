@@ -161,6 +161,9 @@
         font-size: 22px;
         letter-spacing: 0.2em;
       }
+      .hint[hidden] {
+        display: none;
+      }
       .hint {
         color: var(--muted);
         font-size: 14px;
@@ -281,6 +284,11 @@
           <p class="hint" id="linkHint">
             Телефон должен быть в той же Wi-Fi сети.
           </p>
+          <p class="hint" id="tsHint" hidden>
+            Чтобы смотреть из другой сети (например, с работы): установите
+            Tailscale на Mac и на телефон и войдите в один аккаунт — ссылка «из
+            любой сети» появится здесь.
+          </p>
           <ol class="steps">
             <li>Наведите камеру телефона на QR-код</li>
             <li>
@@ -344,12 +352,14 @@
             $("pinbox").hidden = false;
           }
           var box = $("links");
-          if (!info.watchUrls.length) {
+          var tsUrls = info.tailscaleUrls || [];
+          var qrUrl = info.watchUrls[0] || tsUrls[0];
+          if (!qrUrl) {
             $("linkHint").textContent =
               "Не найден IP в локальной сети — подключите Mac к Wi-Fi и перезапустите сервер.";
             return;
           }
-          $("qr").src = "/qr.svg?u=" + encodeURIComponent(info.watchUrls[0]);
+          $("qr").src = "/qr.svg?u=" + encodeURIComponent(qrUrl);
           $("qr").hidden = false;
           info.watchUrls.forEach(function (u) {
             var row = document.createElement("div");
@@ -366,29 +376,35 @@
             row.appendChild(btn);
             box.appendChild(row);
           });
-          if (info.hostUrl) {
-            var hrow = document.createElement("div");
-            hrow.className = "link";
-            var hcode = document.createElement("code");
-            hcode.textContent = info.hostUrl;
-            var hsmall = document.createElement("small");
-            hsmall.textContent = "постоянный адрес — не зависит от смены IP";
-            var hwrap = document.createElement("div");
-            hwrap.style.flex = "1";
-            hwrap.style.minWidth = "0";
-            hcode.style.display = "block";
-            hwrap.appendChild(hcode);
-            hwrap.appendChild(hsmall);
-            var hbtn = document.createElement("button");
-            hbtn.className = "btn ghost";
-            hbtn.textContent = "Копировать";
-            hbtn.onclick = function () {
-              copy(info.hostUrl, hbtn);
+          function noteRow(url, note) {
+            var row = document.createElement("div");
+            row.className = "link";
+            var code = document.createElement("code");
+            code.textContent = url;
+            code.style.display = "block";
+            var small = document.createElement("small");
+            small.textContent = note;
+            var wrap = document.createElement("div");
+            wrap.style.flex = "1";
+            wrap.style.minWidth = "0";
+            wrap.appendChild(code);
+            wrap.appendChild(small);
+            var btn = document.createElement("button");
+            btn.className = "btn ghost";
+            btn.textContent = "Копировать";
+            btn.onclick = function () {
+              copy(url, btn);
             };
-            hrow.appendChild(hwrap);
-            hrow.appendChild(hbtn);
-            box.appendChild(hrow);
+            row.appendChild(wrap);
+            row.appendChild(btn);
+            box.appendChild(row);
           }
+          if (info.hostUrl)
+            noteRow(info.hostUrl, "постоянный адрес — не зависит от смены IP");
+          tsUrls.forEach(function (u) {
+            noteRow(u, "из любой сети — через Tailscale");
+          });
+          if (!tsUrls.length) $("tsHint").hidden = false;
         })
         .catch(function () {});
 

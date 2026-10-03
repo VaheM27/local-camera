@@ -124,6 +124,11 @@ function buildTrayMenu() {
       enabled: false,
     },
     {
+      label: "Скопировать ссылку Tailscale (из любой сети)",
+      visible: info.tailscaleUrls.length > 0,
+      click: () => clipboard.writeText(info.tailscaleUrls[0]),
+    },
+    {
       label: "Скопировать ссылку для телефона",
       enabled: !!link,
       click: () => clipboard.writeText(link),
