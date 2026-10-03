@@ -85,18 +85,130 @@
         display: none;
       }
       .talkrow .btn {
-        flex: 1;
-        max-width: 200px;
-        padding: 10px 12px;
-        border-radius: 999px;
-        font-size: 15px;
+        width: 52px;
+        height: 52px;
+        padding: 0;
+        border-radius: 50%;
+        font-size: 22px;
         background: rgba(255, 255, 255, 0.16);
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
       }
+      .talkrow .btn[hidden] {
+        display: none;
+      }
       .talkrow .btn.active {
         background: var(--ok);
         color: #052e13;
+      }
+      .talkrow .btn.recording {
+        width: auto;
+        padding: 0 16px;
+        border-radius: 26px;
+        font-size: 16px;
+        background: var(--bad);
+        color: #fff;
+      }
+      @media (max-width: 430px) {
+        .bottom {
+          gap: 8px;
+        }
+        .bottom > .round {
+          width: 46px;
+          height: 46px;
+          font-size: 20px;
+        }
+        .zbadge {
+          min-width: 44px;
+          padding: 6px 6px;
+        }
+      }
+      .flash {
+        position: fixed;
+        inset: 0;
+        z-index: 4;
+        background: #fff;
+        opacity: 0;
+        pointer-events: none;
+      }
+      .flash.go {
+        animation: flash 0.35s ease-out;
+      }
+      @keyframes flash {
+        from {
+          opacity: 0.85;
+        }
+        to {
+          opacity: 0;
+        }
+      }
+      .gear {
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        border-radius: 50%;
+        font-size: 20px;
+        background: rgba(255, 255, 255, 0.16);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+      .panel {
+        position: fixed;
+        z-index: 5;
+        right: 12px;
+        top: calc(64px + env(safe-area-inset-top));
+        width: min(320px, calc(100vw - 24px));
+        padding: 16px;
+        border-radius: 18px;
+        background: rgba(21, 25, 34, 0.96);
+        border: 1px solid var(--line);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+      }
+      .panel[hidden] {
+        display: none;
+      }
+      .panel h3 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .seg {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        margin-bottom: 16px;
+      }
+      .seg button {
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 9px 2px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #0f131b;
+        color: var(--text);
+      }
+      .seg button.on {
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 4px 12px;
+        font-size: 14px;
+        margin: 0;
+      }
+      .stats dt {
+        color: var(--muted);
+      }
+      .stats dd {
+        margin: 0;
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
       }
       .toast {
         position: fixed;
@@ -277,11 +389,64 @@
         ><span class="dot" id="dot"></span
         ><span id="status">Подключение…</span></span
       >
+      <button class="btn gear" id="gear" aria-label="Качество и статистика">
+        ⚙
+      </button>
     </div>
+    <div class="panel" id="panel" hidden>
+      <h3>Качество видео</h3>
+      <div class="seg" id="seg">
+        <button data-q="auto">Авто</button>
+        <button data-q="high">Высокое</button>
+        <button data-q="mid">Среднее</button>
+        <button data-q="low">Экономное</button>
+      </div>
+      <h3>Статистика</h3>
+      <dl class="stats">
+        <dt>Разрешение</dt>
+        <dd id="stRes">—</dd>
+        <dt>Кадров/с</dt>
+        <dd id="stFps">—</dd>
+        <dt>Скорость</dt>
+        <dd id="stBr">—</dd>
+        <dt>Пинг</dt>
+        <dd id="stRtt">—</dd>
+        <dt>Буфер</dt>
+        <dd id="stBuf">—</dd>
+        <dt>Режим</dt>
+        <dd id="stMode">—</dd>
+      </dl>
+    </div>
+    <div class="flash" id="flash"></div>
     <div class="bottom">
       <div class="talkrow" id="talkrow" hidden>
-        <button class="btn" id="talk">🎙 Говорить</button>
-        <button class="btn" id="mycam">📹 Моя камера</button>
+        <button
+          class="btn"
+          id="shot"
+          aria-label="Сделать снимок"
+          title="Снимок"
+        >
+          📸
+        </button>
+        <button class="btn" id="rec" aria-label="Записать видео" title="Запись">
+          ⏺
+        </button>
+        <button
+          class="btn"
+          id="talk"
+          aria-label="Говорить в микрофон телефона"
+          title="Говорить"
+        >
+          🎙
+        </button>
+        <button
+          class="btn"
+          id="mycam"
+          aria-label="Показать камеру телефона"
+          title="Моя камера"
+        >
+          📹
+        </button>
       </div>
       <div class="volrow" id="volrow" hidden>
         <span id="volicon">🔈</span>
@@ -419,12 +584,6 @@
       function refreshBack() {
         $("talk").classList.toggle("active", back.mic);
         $("mycam").classList.toggle("active", back.cam);
-        $("talk").textContent = back.mic
-          ? "🎙 Микрофон включён"
-          : "🎙 Говорить";
-        $("mycam").textContent = back.cam
-          ? "📹 Камера включена"
-          : "📹 Моя камера";
       }
       function backStop() {
         if (back.pc) {
@@ -527,9 +686,274 @@
       }
       $("talk").onclick = function () {
         toggleBack("mic");
+        toast(back.mic ? "Микрофон телефона включён" : "Микрофон выключен");
       };
       $("mycam").onclick = function () {
         toggleBack("cam");
+        toast(back.cam ? "Камера телефона включена" : "Камера выключена");
+      };
+
+      /* ---------- снимок и запись (сохраняются на телефон) ---------- */
+      function download(blob, name) {
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () {
+          URL.revokeObjectURL(a.href);
+          a.remove();
+        }, 4000);
+      }
+      // iPhone: «Поделиться» → «Сохранить в Фото»; иначе обычное скачивание файла.
+      function saveBlob(blob, name) {
+        var file = null;
+        try {
+          file = new File([blob], name, { type: blob.type });
+        } catch (e) {}
+        if (
+          file &&
+          navigator.canShare &&
+          navigator.canShare({ files: [file] })
+        ) {
+          return navigator.share({ files: [file] }).catch(function (err) {
+            if (!err || err.name !== "AbortError") download(blob, name);
+          });
+        }
+        download(blob, name);
+        return Promise.resolve();
+      }
+      function stamp() {
+        var d = new Date(),
+          p = function (n) {
+            return (n < 10 ? "0" : "") + n;
+          };
+        return (
+          d.getFullYear() +
+          p(d.getMonth() + 1) +
+          p(d.getDate()) +
+          "-" +
+          p(d.getHours()) +
+          p(d.getMinutes()) +
+          p(d.getSeconds())
+        );
+      }
+      $("shot").onclick = function () {
+        var src = inFallback ? canvas : v;
+        var w = inFallback ? canvas.width : v.videoWidth;
+        var h = inFallback ? canvas.height : v.videoHeight;
+        if (!w || !h) {
+          toast("Пока нет картинки");
+          return;
+        }
+        var c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        c.getContext("2d").drawImage(src, 0, 0, w, h);
+        $("flash").classList.remove("go");
+        void $("flash").offsetWidth;
+        $("flash").classList.add("go");
+        c.toBlob(
+          function (blob) {
+            if (!blob) return toast("Не удалось сделать снимок");
+            saveBlob(blob, "camera-" + stamp() + ".jpg").then(function () {
+              toast("Снимок сохранён");
+            });
+          },
+          "image/jpeg",
+          0.92,
+        );
+      };
+
+      var R = { rec: null, chunks: [], t0: 0, timer: null, mime: "" };
+      function pickMime() {
+        var list = [
+          "video/mp4;codecs=avc1",
+          "video/webm;codecs=vp9,opus",
+          "video/webm;codecs=vp8,opus",
+          "video/webm",
+          "video/mp4",
+        ];
+        for (var i = 0; i < list.length; i++)
+          if (
+            window.MediaRecorder &&
+            MediaRecorder.isTypeSupported &&
+            MediaRecorder.isTypeSupported(list[i])
+          )
+            return list[i];
+        return "";
+      }
+      function recLabel() {
+        var s = Math.floor((Date.now() - R.t0) / 1000);
+        $("rec").textContent =
+          "⏹ " + Math.floor(s / 60) + ":" + (s % 60 < 10 ? "0" : "") + (s % 60);
+      }
+      function startRec() {
+        if (!window.MediaRecorder)
+          return toast("Этот браузер не умеет записывать видео");
+        var src = inFallback ? canvas.captureStream(15) : v.srcObject;
+        if (!src) return toast("Пока нет видео");
+        R.mime = pickMime();
+        var rec;
+        try {
+          rec = new MediaRecorder(
+            src,
+            R.mime ? { mimeType: R.mime } : undefined,
+          );
+        } catch (e) {
+          return toast("Не удалось начать запись: " + e.message);
+        }
+        R.rec = rec;
+        R.chunks = [];
+        rec.ondataavailable = function (e) {
+          if (e.data && e.data.size) R.chunks.push(e.data);
+        };
+        rec.onstop = function () {
+          clearInterval(R.timer);
+          R.rec = null;
+          $("rec").textContent = "⏺";
+          $("rec").classList.remove("recording");
+          var type = (rec.mimeType || R.mime || "video/webm").split(";")[0];
+          var blob = new Blob(R.chunks, { type: type });
+          R.chunks = [];
+          if (!blob.size) return toast("Запись пустая");
+          saveBlob(
+            blob,
+            "camera-" + stamp() + (type.indexOf("mp4") >= 0 ? ".mp4" : ".webm"),
+          ).then(function () {
+            toast("Запись сохранена");
+          });
+        };
+        rec.start(1000);
+        R.t0 = Date.now();
+        $("rec").classList.add("recording");
+        recLabel();
+        R.timer = setInterval(recLabel, 1000);
+      }
+      function stopRec() {
+        if (R.rec && R.rec.state !== "inactive") R.rec.stop();
+      }
+      $("rec").onclick = function () {
+        if (R.rec) stopRec();
+        else startRec();
+      };
+
+      /* ---------- качество и статистика ---------- */
+      var quality = "auto";
+      try {
+        quality = localStorage.getItem("quality") || "auto";
+      } catch (e) {}
+      function markQuality() {
+        [].forEach.call($("seg").children, function (b) {
+          b.classList.toggle("on", b.getAttribute("data-q") === quality);
+        });
+      }
+      function sendQuality() {
+        if (ws && ws.readyState === 1)
+          ws.send(JSON.stringify({ type: "quality", level: quality }));
+      }
+      [].forEach.call($("seg").children, function (b) {
+        b.onclick = function () {
+          quality = b.getAttribute("data-q");
+          try {
+            localStorage.setItem("quality", quality);
+          } catch (e) {}
+          markQuality();
+          sendQuality();
+        };
+      });
+      markQuality();
+
+      var prev = null;
+      function updateStats() {
+        if (!pc || inFallback) {
+          $("stRes").textContent = v.videoWidth
+            ? v.videoWidth + "×" + v.videoHeight
+            : "—";
+          $("stMode").textContent = inFallback ? "запасной (кадры)" : "—";
+          ["stFps", "stBr", "stRtt", "stBuf"].forEach(function (id) {
+            $(id).textContent = "—";
+          });
+          return;
+        }
+        pc.getStats()
+          .then(function (report) {
+            var now = Date.now(),
+              inbound = null,
+              pair = null,
+              remoteType = "";
+            report.forEach(function (s) {
+              if (
+                s.type === "inbound-rtp" &&
+                (s.kind === "video" || s.mediaType === "video")
+              )
+                inbound = s;
+              if (
+                s.type === "candidate-pair" &&
+                (s.nominated || s.state === "succeeded") &&
+                s.currentRoundTripTime != null
+              )
+                pair = s;
+            });
+            if (pair)
+              report.forEach(function (s) {
+                if (s.id === pair.remoteCandidateId)
+                  remoteType = s.candidateType;
+              });
+            $("stRes").textContent = v.videoWidth
+              ? v.videoWidth + "×" + v.videoHeight
+              : "—";
+            if (inbound && prev && now > prev.t) {
+              var dt = (now - prev.t) / 1000;
+              $("stFps").textContent = Math.max(
+                0,
+                Math.round((inbound.framesDecoded - prev.frames) / dt),
+              );
+              $("stBr").textContent =
+                (
+                  (Math.max(0, inbound.bytesReceived - prev.bytes) * 8) /
+                  dt /
+                  1e6
+                ).toFixed(1) + " Мбит/с";
+            }
+            if (inbound) {
+              prev = {
+                t: now,
+                frames: inbound.framesDecoded,
+                bytes: inbound.bytesReceived,
+              };
+              if (
+                inbound.jitterBufferDelay != null &&
+                inbound.jitterBufferEmittedCount
+              )
+                $("stBuf").textContent =
+                  Math.round(
+                    (inbound.jitterBufferDelay /
+                      inbound.jitterBufferEmittedCount) *
+                      1000,
+                  ) + " мс";
+            }
+            $("stRtt").textContent = pair
+              ? Math.round(pair.currentRoundTripTime * 1000) + " мс"
+              : "—";
+            $("stMode").textContent = pair
+              ? remoteType === "relay"
+                ? "через ретранслятор"
+                : "напрямую"
+              : "—";
+          })
+          .catch(function () {});
+      }
+      var statsTimer = null;
+      $("gear").onclick = function () {
+        var open = $("panel").hidden;
+        $("panel").hidden = !open;
+        clearInterval(statsTimer);
+        prev = null;
+        if (open) {
+          updateStats();
+          statsTimer = setInterval(updateStats, 1000);
+        }
       };
 
       var toastTimer = null;
@@ -819,13 +1243,16 @@
         back.mic = back.cam = false;
         refreshBack();
         $("talkrow").hidden = true;
+        if (R.rec) stopRec();
         document.body.classList.remove("idle");
       }
 
       function playing(text) {
         setStatus(text, "live");
         show("playing");
-        $("talkrow").hidden = inFallback; // обратный канал тоже на WebRTC
+        $("talkrow").hidden = false;
+        // «Говорить» и «Моя камера» работают через WebRTC, снимок и запись — всегда
+        $("talk").hidden = $("mycam").hidden = inFallback;
         wake();
       }
 
@@ -858,6 +1285,7 @@
         mine.onconnectionstatechange = function () {
           if (mine !== pc) return;
           if (mine.connectionState === "connected") {
+            sendQuality();
             clearTimeout(fallbackTimer);
             setFallback(false);
             playing("В эфире");

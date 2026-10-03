@@ -323,6 +323,11 @@ function attachSignaling(server) {
           if (ws === broadcaster)
             send(viewers.get(m.to), { ...m, to: undefined });
           break;
+        case "quality": // зритель просит качество: Mac применяет его к своему потоку для этого зрителя
+          if (!viewers.has(ws.id)) return;
+          if (["auto", "high", "mid", "low"].includes(m.level))
+            send(broadcaster, { type: "quality", level: m.level, from: ws.id });
+          break;
         case "want-frames":
           if (!viewers.has(ws.id)) return;
           ws.frames = !!m.on;

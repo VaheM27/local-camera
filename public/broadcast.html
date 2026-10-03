@@ -580,7 +580,10 @@
                 var t = tracks.filter(function (x) {
                   return s.track && x.kind === s.track.kind;
                 })[0];
-                if (t) s.replaceTrack(t);
+                if (t)
+                  s.replaceTrack(t).then(function () {
+                    applyQuality(id);
+                  });
               });
               // Если звук включили только что — проще переподключить зрителя.
               if (
@@ -630,7 +633,12 @@
             );
           } else if (m.type === "viewer-joined") addViewer(m.id);
           else if (m.type === "viewer-left") dropViewer(m.id);
-          else if (m.type === "back-offer") onBackOffer(m.from, m.sdp);
+          else if (m.type === "quality") {
+            if (peers[m.from]) {
+              peers[m.from].level = m.level;
+              applyQuality(m.from);
+            }
+          } else if (m.type === "back-offer") onBackOffer(m.from, m.sdp);
           else if (m.type === "back-candidate")
             onBackCandidate(m.from, m.candidate);
           else if (m.type === "back-stop") dropBack(m.from);
@@ -651,7 +659,7 @@
       function addViewer(id) {
         dropViewer(id, true);
         var pc = new RTCPeerConnection(RTC_CONFIG);
-        peers[id] = { pc: pc, queue: [], remote: false };
+        peers[id] = { pc: pc, queue: [], remote: false, level: "auto" };
         stream.getTracks().forEach(function (t) {
           pc.addTrack(t, stream);
         });
@@ -666,6 +674,7 @@
             );
         };
         pc.onconnectionstatechange = function () {
+          if (pc.connectionState === "connected") applyQuality(id);
           if (
             pc.connectionState === "failed" ||
             pc.connectionState === "closed"
@@ -726,6 +735,40 @@
           "Зрителей: " +
           n +
           (framesOn ? " · есть зритель в запасном режиме (без звука)" : "");
+      }
+
+      /* ---------- качество для каждого зрителя (выбирается на телефоне) ---------- */
+      var QUALITY = {
+        auto: null,
+        high: { height: 1080, bitrate: 5000000, fps: 30 },
+        mid: { height: 720, bitrate: 2500000, fps: 30 },
+        low: { height: 480, bitrate: 800000, fps: 15 },
+      };
+      function applyQuality(id) {
+        var p = peers[id];
+        if (!p) return;
+        var sender = p.pc.getSenders().filter(function (s) {
+          return s.track && s.track.kind === "video";
+        })[0];
+        if (!sender || !sender.getParameters) return;
+        var q = QUALITY[p.level] || null;
+        var params = sender.getParameters();
+        if (!params.encodings || !params.encodings.length)
+          params.encodings = [{}];
+        var enc = params.encodings[0];
+        if (!q) {
+          delete enc.maxBitrate;
+          delete enc.maxFramerate;
+          delete enc.scaleResolutionDownBy;
+        } else {
+          var h =
+            (sender.track.getSettings && sender.track.getSettings().height) ||
+            q.height;
+          enc.maxBitrate = q.bitrate;
+          enc.maxFramerate = q.fps;
+          enc.scaleResolutionDownBy = Math.max(1, h / q.height);
+        }
+        sender.setParameters(params).catch(function () {});
       }
 
       /* ---------- обратный канал: микрофон и камера телефона -> Mac ---------- */
