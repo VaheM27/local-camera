@@ -289,7 +289,7 @@
           type="range"
           id="vol"
           min="0"
-          max="200"
+          max="100"
           step="5"
           value="100"
           aria-label="Громкость"
@@ -351,69 +351,60 @@
       document.addEventListener("click", wake);
 
       /* ---------- громкость ----------
-         iPhone Safari не даёт менять video.volume, поэтому звук идёт через Web Audio
-         (GainNode): регулировка 0–200% работает везде. Видео остаётся muted. */
-      var AC = window.AudioContext || window.webkitAudioContext;
-      var A = {
-        ctx: null,
-        gain: null,
-        src: null,
-        stream: null,
-        vol: 1,
-        on: false,
-      };
+         Звук играет самим элементом <video> — самый надёжный путь на iPhone и Android.
+         iOS не даёт менять video.volume: там громкость — кнопками телефона, ползунок
+         скрывается, остаётся кнопка «звук вкл/выкл». */
+      var A = { vol: 1, on: false, canVol: false };
+      try {
+        v.volume = 0.5;
+        A.canVol = Math.abs(v.volume - 0.5) < 0.01;
+        v.volume = 1;
+      } catch (e) {}
       function applyVolume() {
-        if (A.gain) A.gain.gain.value = A.on ? A.vol : 0;
-        else {
-          v.muted = !A.on;
-          v.volume = Math.min(1, A.vol);
-        }
+        v.muted = !A.on || (A.canVol && A.vol === 0);
+        if (A.canVol) v.volume = Math.min(1, A.vol);
         $("volv").textContent = Math.round(A.vol * 100) + "%";
-        var silent = !A.on || A.vol === 0;
-        $("sound").textContent = silent ? "🔇" : "🔊";
-        $("volicon").textContent = silent ? "🔇" : A.vol < 0.5 ? "🔈" : "🔉";
+        $("sound").textContent = v.muted ? "🔇" : "🔊";
+        $("volicon").textContent = v.muted ? "🔇" : A.vol < 0.5 ? "🔈" : "🔉";
       }
-      function connectAudio() {
-        // подключить аудиодорожку текущего потока к GainNode
-        if (!A.ctx || !A.stream || !A.stream.getAudioTracks().length) return;
-        try {
-          if (A.src) A.src.disconnect();
-        } catch (e) {}
-        A.src = A.ctx.createMediaStreamSource(
-          new MediaStream(A.stream.getAudioTracks()),
-        );
-        A.src.connect(A.gain);
-      }
-      function enableSound(on) {
-        // вызывать из жеста пользователя
-        A.on = on;
-        if (on && AC && !A.ctx) {
-          try {
-            A.ctx = new AC();
-            A.gain = A.ctx.createGain();
-            A.gain.connect(A.ctx.destination);
-            v.muted = true; // звук пойдёт через Web Audio
-            connectAudio();
-          } catch (e) {
-            A.ctx = A.gain = null;
-          }
-        }
-        if (on && A.ctx && A.ctx.state === "suspended") A.ctx.resume();
-        applyVolume();
+      function playVideo() {
         var p = v.play();
-        if (p && p.catch) p.catch(function () {});
+        if (p && p.catch)
+          p.catch(function () {
+            // браузер не разрешил воспроизведение со звуком без нажатия — играем без звука
+            if (!v.muted) {
+              A.on = false;
+              applyVolume();
+              var p2 = v.play();
+              if (p2 && p2.catch) p2.catch(function () {});
+              toast("Нажмите 🔊, чтобы включить звук");
+            }
+          });
+      }
+      function hasAudio() {
+        return !!(v.srcObject && v.srcObject.getAudioTracks().length);
       }
       $("sound").onclick = function () {
-        var on = !(A.on && A.vol > 0);
-        if (on && A.vol === 0) {
+        if (!hasAudio()) {
+          toast(
+            "С Mac не приходит звук. На странице вещания включите «со звуком» и разрешите микрофон.",
+          );
+          return;
+        }
+        var on = !(A.on && !v.muted);
+        if (on && A.canVol && A.vol === 0) {
           A.vol = 1;
           $("vol").value = 100;
         }
-        enableSound(on);
+        A.on = on;
+        applyVolume();
+        playVideo();
       };
       $("vol").oninput = function () {
         A.vol = Number(this.value) / 100;
-        enableSound(A.vol > 0);
+        A.on = A.vol > 0;
+        applyVolume();
+        playVideo();
       };
 
       /* ---------- обратный канал: микрофон/камера телефона -> Mac ---------- */
@@ -820,7 +811,6 @@
         v.srcObject = null;
         $("sound").hidden = true;
         $("volrow").hidden = true;
-        A.stream = null;
         backStop();
         back.mic = back.cam = false;
         refreshBack();
@@ -856,15 +846,9 @@
             s.addTrack(e.track);
           }
           v.srcObject = s;
-          var p = v.play();
-          if (p && p.catch) p.catch(function () {});
-          var hasAudio = s.getAudioTracks().length > 0;
-          $("sound").hidden = !hasAudio;
-          $("volrow").hidden = !hasAudio;
-          if (hasAudio) {
-            A.stream = s;
-            connectAudio();
-          }
+          playVideo();
+          $("sound").hidden = false;
+          $("volrow").hidden = !A.canVol;
           applyVolume();
         };
         mine.onconnectionstatechange = function () {
